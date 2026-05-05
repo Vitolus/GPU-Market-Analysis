@@ -76,6 +76,8 @@ shs_clean <- shs %>%
     month_year = floor_date(date, "month"),
     join_name = clean_gpu_string(name)
   ) %>%
+  # Apply strict timeline filter
+  filter(month_year >= ymd("2009-01-01") & month_year <= ymd("2025-12-31")) %>%
   select(month_year, join_name, percentage)
 
 # Process AI Architectural Specs (ml_hardware.csv)
@@ -112,7 +114,8 @@ ppi_clean <- ppi_data %>%
     date = ymd(date),
     month_year = floor_date(date, "month")
   ) %>%
-  filter(month_year >= min_shs_date) %>%
+  # Apply strict timeline filter
+  filter(month_year >= ymd("2009-01-01") & month_year <= ymd("2025-12-31")) %>%
   select(month_year, semi_ppi)
 
 write_csv(video_cards_clean, "data/video_cards_clean.csv")
