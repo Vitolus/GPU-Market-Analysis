@@ -94,4 +94,9 @@ ppi_clean <- ppi_data %>%
   ) %>%
   filter(month_year >= min_shs_date) %>%
   select(month_year, semi_ppi)
+
+write_csv(video_cards_clean, "data/video_cards_clean.csv")
+write_csv(benchmarks_clean, "data/benchmarks_clean.csv")
+write_csv(shs_clean, "data/shs_clean.csv")
+write_csv(ppi_clean, "data/ppi_clean.csv")
 ```
