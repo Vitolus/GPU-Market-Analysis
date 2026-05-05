@@ -30,7 +30,6 @@ clean_gpu_string <- function(name_col) {
 
 We load the five disparate datasets required for the high-dimensional dataset.
 ```{r}
-# TODO: filter out columns/rows keeping only those relevant to the analysis, e.g., retail price, GPU name, benchmark scores, etc.
 # Assuming files are in the working directory
 video_cards <- read_csv("data/video-card.csv") %>% clean_names()
 gpu_benchmarks <- read_csv("data/GPU_benchmarks_v7.csv") %>% clean_names()
@@ -53,12 +52,16 @@ video_cards_clean <- video_cards %>%
     vram_capacity = max(memory, na.rm = TRUE),
     core_clock = max(core_clock, na.rm = TRUE),
     boost_clock = max(boost_clock, na.rm = TRUE)
+  ) %>%
+  # Catch -Inf (from max) and NaN (from mean) and safely convert back to NA
+  mutate(
+    across(c(vram_capacity, core_clock, boost_clock), ~na_if(., -Inf)),
+    avg_retail_price = na_if(avg_retail_price, NaN)
   )
 
 # Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
 # Keeping price, dropping mobile/unknown segments
 benchmarks_clean <- gpu_benchmarks %>%
-  filter(category %in% c("Desktop", "Workstation")) %>%
   mutate(join_name = clean_gpu_string(gpu_name)) %>%
   select(join_name, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
   # Handle potential duplicates if generalized names overlap
@@ -76,12 +79,29 @@ shs_clean <- shs %>%
   select(month_year, join_name, percentage)
 
 # Process AI Architectural Specs (ml_hardware.csv)
-# Filtering for GPUs only. Column selection reserved for the next phase.
+# Filtering for GPUs only. Keeping all numeric specs, dropping irrelevant string columns
 ml_hardware_clean <- ml_hardware %>%
-  filter(type %in% c("GPU", "GPGPU")) %>%
-  mutate(join_name = clean_gpu_string(hardware_name))
-
-#TODO: add filtering of ml_hardware
+  filter(type == "GPU") %>%
+  mutate(join_name = clean_gpu_string(hardware_name)) %>%
+  select(
+    join_name,
+    memory_bandwidth_byte_s = matches("memory_bandwidth"),
+    tensor_cores,
+    transistors_millions,
+    fp16_flops = matches("fp16_half"),
+    fp32_flops = matches("fp32_single"),
+    fp64_flops = matches("fp64_double"),
+    tensor_fp16_bf16_flops = matches("tensor_fp16"),
+    tf32_flops = matches("tf32_tensor"),
+    int8_ops = matches("int8_performance"),
+    int4_ops = matches("int4_performance"),
+    ml_memory_bytes = matches("memory_bytes"),
+    ml_tdp = matches("tdp"),
+    ml_base_clock = matches("base_clock"),
+    ml_boost_clock = matches("boost_clock"),
+    ml_release_price = matches("release_price")
+  ) %>%
+  distinct(join_name, .keep_all = TRUE)
 
 # Process Baseline Inflation Control (FRED's PCU334413334413.csv)
 # Filtering out historical data that precedes the SHS timeline
@@ -98,5 +118,62 @@ ppi_clean <- ppi_data %>%
 write_csv(video_cards_clean, "data/video_cards_clean.csv")
 write_csv(benchmarks_clean, "data/benchmarks_clean.csv")
 write_csv(shs_clean, "data/shs_clean.csv")
+write_csv(ml_hardware_clean, "data/ml_hardware_clean.csv")
 write_csv(ppi_clean, "data/ppi_clean.csv")
+```
+
+
+
+```{r}
+hardware_dictionary <- video_cards_clean %>%
+  full_join(benchmarks_clean, by = "join_name") %>%
+  full_join(ml_hardware_clean, by = "join_name") %>%
+  mutate(
+    # Convert all 0 values to NA across overlapping columns
+    across(
+      # Corrected 'retail_price_mean' to 'avg_retail_price' to match your summarise block
+      c(avg_retail_price, benchmark_price, ml_release_price,
+        core_clock, ml_base_clock,
+        boost_clock, ml_boost_clock,
+        tdp, ml_tdp,
+        vram_capacity, ml_memory_bytes),
+      ~na_if(., 0)
+    ),
+    # Normalize ML memory from Bytes to Megabytes (MB)
+    ml_memory_mb = ml_memory_bytes / 1048576,
+    # Calculate Unified Means (suppressWarnings hides NaN warnings if all columns are NA)
+    unified_price = suppressWarnings(rowMeans(cbind(avg_retail_price, benchmark_price, ml_release_price), na.rm = TRUE)),
+    unified_base_clock = suppressWarnings(rowMeans(cbind(core_clock, ml_base_clock), na.rm = TRUE)),
+    unified_boost_clock = suppressWarnings(rowMeans(cbind(boost_clock, ml_boost_clock), na.rm = TRUE)),
+    unified_tdp = suppressWarnings(rowMeans(cbind(tdp, ml_tdp), na.rm = TRUE)),
+    unified_memory_mb = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory_mb), na.rm = TRUE))
+  ) %>%
+  # Drop the original messy columns
+  select(
+    -avg_retail_price, -benchmark_price, -ml_release_price,
+    -core_clock, -ml_base_clock,
+    -boost_clock, -ml_boost_clock,
+    -tdp, -ml_tdp,
+    -vram_capacity, -ml_memory_bytes, -ml_memory_mb
+  ) %>%
+  # Re-filter to actionable data
+  filter(!is.nan(unified_price))
+
+time_series_data <- shs_clean %>%
+  left_join(ppi_clean, by = "month_year")
+
+final_analytical_dataset <- time_series_data %>%
+  inner_join(hardware_dictionary, by = "join_name") %>%
+  mutate(
+    # Create the baseline inflation control target
+    inflation_adjusted_price = unified_price / (semi_ppi / 100),
+
+    # Target Casting for Logistic Regression
+    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
+
+    # Ensure categorical features are appropriately typed
+    category = as.factor(category)
+  )
+
+write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv", na = "NA")
 ```
