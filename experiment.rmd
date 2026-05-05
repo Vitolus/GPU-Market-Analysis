@@ -154,7 +154,8 @@ write_csv(ml_hardware_clean, "data/ml_hardware_clean.csv")
 write_csv(ppi_clean, "data/ppi_clean.csv")
 ```
 
-
+Export the Static Dictionary for Auditing (No Repeated Rows)
+Use this to easily see which exact GPUs are missing VRAM, FLOPs, or Prices
 
 ```{r}
 hardware_dictionary <- video_cards_clean %>%
@@ -191,18 +192,29 @@ hardware_dictionary <- video_cards_clean %>%
   # Re-filter to actionable data
   filter(!is.nan(unified_price))
 
+write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
+```
+
+Export the Temporal Data for Auditing
+Use this to track pure market share and inflation trends over time
+
+```{r}
 time_series_data <- shs_clean %>%
   left_join(ppi_clean, by = "month_year")
 
+write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
+```
+
+The Unified Dataset (STRICTLY FOR ISLR MODELING)
+
+```{r}
 final_analytical_dataset <- time_series_data %>%
   inner_join(hardware_dictionary, by = "join_name") %>%
   mutate(
     # Create the baseline inflation control target
     inflation_adjusted_price = unified_price / (semi_ppi / 100),
-
     # Target Casting for Logistic Regression
     is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
-
     # Ensure categorical features are appropriately typed
     category = as.factor(category)
   )
