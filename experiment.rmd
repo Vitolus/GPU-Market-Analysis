@@ -164,7 +164,6 @@ hardware_dictionary <- video_cards_clean %>%
   mutate(
     # Convert all 0 values to NA across overlapping columns
     across(
-      # Corrected 'retail_price_mean' to 'avg_retail_price' to match your summarise block
       c(avg_retail_price, benchmark_price, ml_release_price,
         core_clock, ml_base_clock,
         boost_clock, ml_boost_clock,
@@ -179,7 +178,11 @@ hardware_dictionary <- video_cards_clean %>%
     unified_base_clock = suppressWarnings(rowMeans(cbind(core_clock, ml_base_clock), na.rm = TRUE)),
     unified_boost_clock = suppressWarnings(rowMeans(cbind(boost_clock, ml_boost_clock), na.rm = TRUE)),
     unified_tdp = suppressWarnings(rowMeans(cbind(tdp, ml_tdp), na.rm = TRUE)),
-    unified_memory_mb = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory_mb), na.rm = TRUE))
+    unified_memory_mb = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory_mb), na.rm = TRUE)),
+    # Target Casting for Logistic Regression
+    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
+    # Ensure categorical features are appropriately typed
+    category = as.factor(category)
   ) %>%
   # Drop the original messy columns
   select(
@@ -213,10 +216,6 @@ final_analytical_dataset <- time_series_data %>%
   mutate(
     # Create the baseline inflation control target
     inflation_adjusted_price = unified_price / (semi_ppi / 100),
-    # Target Casting for Logistic Regression
-    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
-    # Ensure categorical features are appropriately typed
-    category = as.factor(category)
   )
 
 write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv", na = "NA")
