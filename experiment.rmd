@@ -23,7 +23,7 @@ clean_gpu_string <- function(name_col) {
   name_col %>%
     str_to_lower() %>%
     str_remove_all("msi|asus|gigabyte|zotac|evga|sapphire|powercolor|pny") %>%
-    str_remove_all("nvidia|amd|geforce|radeon|founders edition") %>%
+    str_remove_all("nvidia|amd|founders edition") %>%
     str_squish()
 }
 ```
