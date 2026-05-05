@@ -39,11 +39,13 @@ shs <- read_csv("data/shs.csv") %>% clean_names()
 ppi_data <- read_csv("data/PCU334413334413.csv") %>% clean_names()
 ```
 
-We map the chipset column in the video-card.csv data directly to the gpuName column in GPU_benchmarks_v7.csv.
+Filter out irrelevant columns and rows from the 5 datasets.
 
 ```{r}
 # Process Retail Video Cards (video-card.csv)
+# Keeping NA/0 prices, dropping irrelevant string columns
 video_cards_clean <- video_cards %>%
+  select(-name, -color, -length) %>%
   mutate(join_name = clean_gpu_string(chipset)) %>%
   group_by(join_name) %>%
   summarise(
@@ -52,29 +54,46 @@ video_cards_clean <- video_cards %>%
     core_clock = max(core_clock, na.rm = TRUE),
     boost_clock = max(boost_clock, na.rm = TRUE)
   )
+
 # Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
+# Keeping price, dropping mobile/unknown segments
 benchmarks_clean <- gpu_benchmarks %>%
+  filter(category %in% c("Desktop", "Workstation")) %>%
   mutate(join_name = clean_gpu_string(gpu_name)) %>%
-  select(join_name, category, g3dmark, g2dmark) %>%
+  select(join_name, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
   # Handle potential duplicates if generalized names overlap
   distinct(join_name, .keep_all = TRUE)
-# Process AI Architectural Specs (ml_hardware.csv)
-ml_hardware_clean <- ml_hardware %>%
-  mutate(join_name = clean_gpu_string(hardware_name)) %>%
-  select(
-    join_name,
-    fp16_flops = fp16_half_precision_performance_flop_s,
-    fp32_flops = fp32_single_precision_performance_flop_s,
-    fp64_flops = fp64_double_precision_performance_flop_s,
-    tensor_cores,
-    memory_bandwidth = memory_bandwidth_byte_s
+
+# Process Steam Hardware Survey (shs.csv)
+# Keeping 0 percentages, filtering out CPUs/OS metrics
+shs_clean <- shs %>%
+  filter(category == "Video Card Description") %>%
+  mutate(
+    date = ymd(date),
+    month_year = floor_date(date, "month"),
+    join_name = clean_gpu_string(name)
   ) %>%
-  distinct(join_name, .keep_all = TRUE)
-# Merge Static Dictionary
-hardware_dictionary <- video_cards_clean %>%
-  inner_join(benchmarks_clean, by = "join_name") %>%
-  left_join(ml_hardware_clean, by = "join_name") %>%
-  drop_na(avg_retail_price) # Filter to actionable retail data
+  select(month_year, join_name, percentage)
+
+# Process AI Architectural Specs (ml_hardware.csv)
+# Filtering for GPUs only. Column selection reserved for the next phase.
+ml_hardware_clean <- ml_hardware %>%
+  filter(type %in% c("GPU", "GPGPU")) %>%
+  mutate(join_name = clean_gpu_string(hardware_name))
+
+#TODO: add filtering of ml_hardware
+
+# Process Baseline Inflation Control (FRED)
+# Filtering out historical data that precedes the SHS timeline
+min_shs_date <- min(shs_clean$month_year, na.rm = TRUE)
+ppi_clean <- ppi_data %>%
+  rename(date = observation_date, semi_ppi = pcu334413334413) %>%
+  mutate(
+    date = ymd(date),
+    month_year = floor_date(date, "month")
+  ) %>%
+  filter(month_year >= min_shs_date) %>%
+  select(month_year, semi_ppi)
 ```
 
 We process the Steam Hardware Survey for lagged consumer adoption and the FRED PPI for inflation control.
