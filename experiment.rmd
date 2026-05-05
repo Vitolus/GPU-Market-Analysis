@@ -22,9 +22,20 @@ To accurately synthesize this data, a many-to-one relational join is required. T
 clean_gpu_string <- function(name_col) {
   name_col %>%
     str_to_lower() %>%
+    # Remove brand fluff
     str_remove_all("msi|asus|gigabyte|zotac|evga|sapphire|powercolor|pny") %>%
     str_remove_all("nvidia|amd|founders edition") %>%
-    str_squish()
+    # Remove the word "series" from SHS
+    str_remove_all("\\bseries\\b") %>%
+    str_squish() %>%
+    # Handle AMD Radeon HD groupings (e.g., changes "radeon hd 7750" to "radeon hd 7700")
+    # This regex captures "radeon hd " + two digits + any two digits, and replaces the last two with "00"
+    str_replace_all("radeon hd ([0-9]{2})[0-9]{2}[a-z]*", "radeon hd \\100") %>%
+    # Handle AMD R7/R9 Series groupings (e.g., changes "r9 290x" to "r9 200")
+    str_replace_all("r9 2[0-9]{2}[a-z]*", "r9 200") %>%
+    str_replace_all("r9 3[0-9]{2}[a-z]*", "r9 300") %>%
+    str_replace_all("r7 2[0-9]{2}[a-z]*", "r7 200") %>%
+    str_replace_all("r7 3[0-9]{2}[a-z]*", "r7 300")
 }
 ```
 
