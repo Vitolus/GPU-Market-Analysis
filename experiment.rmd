@@ -39,7 +39,7 @@ shs <- read_csv("data/shs.csv") %>% clean_names()
 ppi_data <- read_csv("data/PCU334413334413.csv") %>% clean_names()
 ```
 
-Filter out irrelevant columns and rows from the 5 datasets.
+Filter out irrelevant columns and rows from the five datasets.
 
 ```{r}
 # Process Retail Video Cards (video-card.csv)
@@ -83,7 +83,7 @@ ml_hardware_clean <- ml_hardware %>%
 
 #TODO: add filtering of ml_hardware
 
-# Process Baseline Inflation Control (FRED)
+# Process Baseline Inflation Control (FRED's PCU334413334413.csv)
 # Filtering out historical data that precedes the SHS timeline
 min_shs_date <- min(shs_clean$month_year, na.rm = TRUE)
 ppi_clean <- ppi_data %>%
@@ -94,51 +94,4 @@ ppi_clean <- ppi_data %>%
   ) %>%
   filter(month_year >= min_shs_date) %>%
   select(month_year, semi_ppi)
-```
-
-We process the Steam Hardware Survey for lagged consumer adoption and the FRED PPI for inflation control.
-
-```{r}
-# Process Steam Hardware Survey (shs.csv)
-shs_clean <- shs %>%
-  mutate(
-    date = ymd(date),
-    month_year = floor_date(date, "month"),
-    join_name = clean_gpu_string(name)
-  ) %>%
-  select(month_year, join_name, percentage)
-# Process Baseline Inflation Control (PCU334413334413.csv)
-ppi_clean <- ppi_data %>%
-  rename(date = observation_date, semi_ppi = pcu334413334413) %>%
-  mutate(
-    date = ymd(date),
-    month_year = floor_date(date, "month")
-  ) %>%
-  select(month_year, semi_ppi)
-# Merge Time-Series Data
-time_series_data <- shs_clean %>%
-  left_join(ppi_clean, by = "month_year")
-```
-
-This data structure broadcasts the underlying silicon capabilities to all partner variations, enabling the statistical models to capture exact retail price variance.
-
-```{r}
-final_analytical_dataset <- time_series_data %>%
-  inner_join(hardware_dictionary, by = "join_name") %>%
-  mutate(
-    # Baseline Inflation Control Engineering
-    inflation_adjusted_price = avg_retail_price / (semi_ppi / 100),
-    # Target Casting for Logistic Regression
-    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
-    # Ensure categorical features are appropriately typed
-    category = as.factor(category)
-  ) %>%
-  select(-any_of(c("price_y", "price_x")))
-# View the final structured data
-glimpse(final_analytical_dataset)
-```
-
-```{r export-csv}
-# Save the final analytical dataset to your working directory
-write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv")
 ```
