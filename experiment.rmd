@@ -24,7 +24,7 @@ clean_gpu_string <- function(name_col) {
     str_to_lower() %>%
     # Remove brand fluff
     str_remove_all("msi|asus|gigabyte|zotac|evga|sapphire|powercolor|pny") %>%
-    str_remove_all("nvidia|amd|founders edition") %>%
+    str_remove_all("nvidia|amd|ati|founders edition") %>%
     # Remove the word "series" from SHS
     str_remove_all("\\bseries\\b") %>%
     str_squish() %>%
@@ -71,17 +71,35 @@ video_cards_clean <- video_cards %>%
   )
 
 # Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
-# Keeping price, dropping mobile/unknown segments
+# Keeping price, dropping mobile segments
 benchmarks_clean <- gpu_benchmarks %>%
+  mutate(
+    # Create a temporary lowercase name for easy regex searching
+    lower_name = str_to_lower(gpu_name),
+    # Intelligently reclassify 'Unknown' (and correct mislabeled) GPUs
+    category = case_when(
+      # If it has laptop terminology, force it to Mobile
+      str_detect(lower_name, "mobile|max-q|laptop|notebook") ~ "Mobile",
+      # If it has enterprise/AI terminology, force it to Workstation
+      str_detect(lower_name, "quadro|tesla|firepro|radeon pro|rtx a[0-9]") ~ "Workstation",
+      # If it's still 'Unknown' after the above checks, safely assume it's a Desktop consumer card
+      category == "Unknown" ~ "Desktop",
+      # Otherwise, keep the original valid classification
+      TRUE ~ category
+    )
+  ) %>%
+  # Now apply the strict filter with confidence that the data is accurately tagged
+  filter(category %in% c("Desktop", "Workstation")) %>%
   mutate(join_name = clean_gpu_string(gpu_name)) %>%
   select(join_name, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
-  # Handle potential duplicates if generalized names overlap
   distinct(join_name, .keep_all = TRUE)
 
 # Process Steam Hardware Survey (shs.csv)
 # Keeping 0 percentages, filtering out CPUs/OS metrics
 shs_clean <- shs %>%
   filter(category == "Video Card Description") %>%
+  # Drop laptop chips (mobility/mobile) and integrated CPU graphics (intel)
+  filter(!str_detect(str_to_lower(name), "mobility|mobile|intel")) %>%
   mutate(
     date = ymd(date),
     month_year = floor_date(date, "month"),
