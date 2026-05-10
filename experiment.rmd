@@ -171,8 +171,8 @@ hardware_dictionary <- video_cards_clean %>%
     # Fixes NA categories for newer cards not in the benchmark dataset
     category = case_when(
       !is.na(category) ~ category, # Keep existing valid categories
-      str_detect(join_name, "rtx|gtx|rx|radeon hd|arc a|arc b|geforce") ~ "Desktop", # Consumer gaming tags
-      str_detect(join_name, "pro|quadro|tesla|instinct") ~ "Workstation", # Enterprise tags
+      str_detect(chipset, "rtx|gtx|rx|radeon hd|arc a|arc b|geforce") ~ "Desktop", # Consumer gaming tags
+      str_detect(chipset, "pro|quadro|tesla|instinct") ~ "Workstation", # Enterprise tags
       TRUE ~ "Workstation" # Default remaining unknowns to Workstation as requested
     ),
     # Convert all 0 values to NA across overlapping columns
