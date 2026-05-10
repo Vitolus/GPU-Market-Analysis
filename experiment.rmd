@@ -56,8 +56,8 @@ Filter out irrelevant columns and rows from the five datasets.
 # Keeping NA/0 prices, dropping irrelevant string columns
 video_cards_clean <- video_cards %>%
   select(-name, -color, -length) %>%
-  mutate(join_name = clean_gpu_string(chipset)) %>%
-  group_by(join_name) %>%
+  mutate(chipset = clean_gpu_string(chipset)) %>%
+  group_by(chipset) %>%
   summarise(
     avg_retail_price = mean(price, na.rm = TRUE),
     vram_capacity = max(memory, na.rm = TRUE),
@@ -90,9 +90,9 @@ benchmarks_clean <- gpu_benchmarks %>%
   ) %>%
   # Now apply the strict filter with confidence that the data is accurately tagged
   filter(category %in% c("Desktop", "Workstation")) %>%
-  mutate(join_name = clean_gpu_string(gpu_name)) %>%
-  select(join_name, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
-  distinct(join_name, .keep_all = TRUE)
+  mutate(chipset = clean_gpu_string(gpu_name)) %>%
+  select(chipset, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
+  distinct(chipset, .keep_all = TRUE)
 
 # Process Steam Hardware Survey (shs.csv)
 # Keeping 0 percentages, filtering out CPUs/OS metrics
@@ -103,36 +103,47 @@ shs_clean <- shs %>%
   mutate(
     date = ymd(date),
     month_year = floor_date(date, "month"),
-    join_name = clean_gpu_string(name)
+    chipset = clean_gpu_string(name)
   ) %>%
   # Apply strict timeline filter
   filter(month_year >= ymd("2009-01-01") & month_year <= ymd("2025-12-31")) %>%
-  select(month_year, join_name, percentage)
+  select(month_year, chipset, percentage)
 
 # Process AI Architectural Specs (ml_hardware.csv)
 # Filtering for GPUs only. Keeping all numeric specs, dropping irrelevant string columns
 ml_hardware_clean <- ml_hardware %>%
   filter(type == "GPU") %>%
-  mutate(join_name = clean_gpu_string(hardware_name)) %>%
+  mutate(chipset = clean_gpu_string(hardware_name)) %>%
   select(
-    join_name,
-    memory_bandwidth_byte_s = matches("memory_bandwidth"),
-    tensor_cores,
-    transistors_millions,
-    fp16_flops = matches("fp16_half"),
-    fp32_flops = matches("fp32_single"),
+    chipset,
+    ml_release_price = matches("release_price"),
+    tf16_flops = matches("tensor_fp16"),
+    fp8_flops = matches("fp8_performance"),
+    fp4_flops = matches("fp4_performance"),
+    ml_memory = matches("memory_bytes"),
+    memory_bandwidth = matches("memory_bandwidth"),
+    ml_tdp = matches("tdp"),
     fp64_flops = matches("fp64_double"),
-    tensor_fp16_bf16_flops = matches("tensor_fp16"),
+    fp32_flops = matches("fp32_single"),
     tf32_flops = matches("tf32_tensor"),
+    fp16_flops = matches("fp16_half"),
+    int16_ops = matches("int16_performance"),
     int8_ops = matches("int8_performance"),
     int4_ops = matches("int4_performance"),
-    ml_memory_bytes = matches("memory_bytes"),
-    ml_tdp = matches("tdp"),
     ml_base_clock = matches("base_clock"),
     ml_boost_clock = matches("boost_clock"),
-    ml_release_price = matches("release_price")
+    memory_clock = matches("memory_clock"),
+    tensor_cores,
+    transistors_millions,
+    energy_efficiency
   ) %>%
-  distinct(join_name, .keep_all = TRUE)
+  mutate(
+    across(
+      c(tf16_flops, fp8_flops, fp4_flops, ml_memory, memory_bandwidth, fp64_flops, fp32_flops, tf32_flops, fp16_flops, int16_ops, int8_ops, int4_ops, energy_efficiency),
+      ~ .x / 1e9
+    )
+  ) %>%
+  distinct(chipset, .keep_all = TRUE)
 
 # Process Baseline Inflation Control (FRED's PCU334413334413.csv)
 # Filtering out historical data that precedes the SHS timeline
@@ -159,8 +170,8 @@ Use this to easily see which exact GPUs are missing VRAM, FLOPs, or Prices
 
 ```{r}
 hardware_dictionary <- video_cards_clean %>%
-  full_join(benchmarks_clean, by = "join_name") %>%
-  full_join(ml_hardware_clean, by = "join_name") %>%
+  full_join(benchmarks_clean, by = "chipset") %>%
+  full_join(ml_hardware_clean, by = "chipset") %>%
   mutate(
     # Convert all 0 values to NA across overlapping columns
     across(
@@ -168,17 +179,15 @@ hardware_dictionary <- video_cards_clean %>%
         core_clock, ml_base_clock,
         boost_clock, ml_boost_clock,
         tdp, ml_tdp,
-        vram_capacity, ml_memory_bytes),
+        vram_capacity, ml_memory),
       ~na_if(., 0)
     ),
-    # Normalize ML memory from Bytes to Megabytes (MB)
-    ml_memory_mb = ml_memory_bytes / 1048576,
     # Calculate Unified Means (suppressWarnings hides NaN warnings if all columns are NA)
     unified_price = suppressWarnings(rowMeans(cbind(avg_retail_price, benchmark_price, ml_release_price), na.rm = TRUE)),
     unified_base_clock = suppressWarnings(rowMeans(cbind(core_clock, ml_base_clock), na.rm = TRUE)),
     unified_boost_clock = suppressWarnings(rowMeans(cbind(boost_clock, ml_boost_clock), na.rm = TRUE)),
     unified_tdp = suppressWarnings(rowMeans(cbind(tdp, ml_tdp), na.rm = TRUE)),
-    unified_memory_mb = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory_mb), na.rm = TRUE)),
+    unified_memory = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory), na.rm = TRUE)),
     # Target Casting for Logistic Regression
     is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
     # Ensure categorical features are appropriately typed
@@ -190,7 +199,7 @@ hardware_dictionary <- video_cards_clean %>%
     -core_clock, -ml_base_clock,
     -boost_clock, -ml_boost_clock,
     -tdp, -ml_tdp,
-    -vram_capacity, -ml_memory_bytes, -ml_memory_mb
+    -vram_capacity, -ml_memory
   ) %>%
   # Re-filter to actionable data
   filter(!is.nan(unified_price))
