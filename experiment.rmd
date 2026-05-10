@@ -28,7 +28,7 @@ clean_gpu_string <- function(name_col) {
     # Destroy hyphens followed by numbers (fixes the " - 512" issue)
     str_remove_all("-\\s*[0-9]+") %>%
     # Target VRAM (3gb), Wattage (75w), minor variants (g5, ddr4), and specific editions (se, oem, lhr, x2)
-    str_remove_all("\\b([0-9]+gb|[0-9]+w|g[56]|ddr[0-9]|se|oem|lhr|x2)\\b") %>%
+    str_remove_all("\\b([0-9]+gb|[0-9]+w|g[56]|ddr[0-9]|se|oem|lhr|x2|sdi)\\b") %>%
     # Remove the word "series" from SHS
     str_remove_all("\\bseries\\b") %>%
     # Squish multiple spaces down to a single space
