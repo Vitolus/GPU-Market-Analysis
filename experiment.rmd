@@ -243,13 +243,42 @@ write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
 Export the Unified Dataset (STRICTLY FOR MODELING)
 
 ```{r}
+# Get the baseline PPI for the end of the dataset (e.g., December 2025)
+baseline_ppi <- ppi_clean %>%
+  filter(month_year == max(month_year)) %>%
+  pull(semi_ppi) %>%
+  max()
+
 final_analytical_dataset <- time_series_data %>%
   inner_join(hardware_dictionary, by = "chipset") %>%
   mutate(
     # Create the baseline inflation control target
-    inflation_adjusted_price = unified_price / (semi_ppi / 100)
+    inflation_adjusted_price = unified_price * (baseline_ppi / semi_ppi)
   )
 
 write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv", na = "NA")
 ```
 
+# Missing Data Analysis
+
+Column-Level Missingness: Which features are missing the most?
+
+```{r}
+missing_cols <- hardware_dictionary %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
+  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary)) * 100) %>%
+  arrange(desc(Missing_Count))
+
+print(missing_cols)
+```
+
+Row-Level Missingness: Which specific GPUs are missing the most data?
+```{r}
+missing_rows <- hardware_dictionary %>%
+  mutate(total_missing_specs = rowSums(is.na(select(., everything())))) %>%
+  select(chipset, category, total_missing_specs) %>%
+  arrange(desc(total_missing_specs))
+
+head(missing_rows, 20)
+```
