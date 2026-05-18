@@ -130,19 +130,15 @@ ml_hardware_clean <- ml_hardware %>%
     chipset,
     ml_release_price = matches("release_price"),
     ml_memory = matches("memory_bytes"),
-    memory_bandwidth = matches("memory_bandwidth"),
     ml_tdp = matches("tdp"),
-    fp64_flops = matches("fp64_double"),
     fp32_flops = matches("fp32_single"),
     ml_base_clock = matches("base_clock"),
     ml_boost_clock = matches("boost_clock"),
     tensor_cores,
-    transistors_millions,
-    energy_efficiency
   ) %>%
   mutate(
     across(
-      c(ml_memory, memory_bandwidth, fp64_flops, fp32_flops, energy_efficiency),
+      c(ml_memory, fp32_flops),
       ~ .x / 1e9
     )
   ) %>%
@@ -240,25 +236,6 @@ time_series_data <- shs_clean %>%
 write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
 ```
 
-Export the Unified Dataset (STRICTLY FOR MODELING)
-
-```{r}
-# Get the baseline PPI for the end of the dataset (e.g., December 2025)
-baseline_ppi <- ppi_clean %>%
-  filter(month_year == max(month_year)) %>%
-  pull(semi_ppi) %>%
-  max()
-
-final_analytical_dataset <- time_series_data %>%
-  inner_join(hardware_dictionary, by = "chipset") %>%
-  mutate(
-    # Create the baseline inflation control target
-    inflation_adjusted_price = unified_price * (baseline_ppi / semi_ppi)
-  )
-
-write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv", na = "NA")
-```
-
 # Missing Data Analysis
 
 Column-Level Missingness: Which features are missing the most?
@@ -274,11 +251,132 @@ print(missing_cols)
 ```
 
 Row-Level Missingness: Which specific GPUs are missing the most data?
+
 ```{r}
 missing_rows <- hardware_dictionary %>%
   mutate(total_missing_specs = rowSums(is.na(select(., everything())))) %>%
   select(chipset, category, total_missing_specs) %>%
   arrange(desc(total_missing_specs))
 
-head(missing_rows, 20)
+print(missing_rows)
+```
+
+Tensor cores were invented in 2018, so all pre-2018 cards will be missing this spec. Thus we can set this to 0 for all cards released before 2018.
+```{r}
+# Create a proxy release date from Steam telemetry
+gpu_release_proxy <- shs_clean %>%
+  group_by(chipset) %>%
+  summarise(first_appearance = min(month_year, na.rm = TRUE))
+
+# Safely Impute Structural Zeros for Pre-2017 GPUs
+hardware_dictionary <- hardware_dictionary %>%
+  # Temporarily join the appearance dates
+  left_join(gpu_release_proxy, by = "chipset") %>%
+  mutate(
+    # If the GPU existed before 2017 and tensor_cores is NA, it physically has 0.
+    # Otherwise, leave the column exactly as it is.
+    tensor_cores = case_when(
+      year(first_appearance) < 2017 & is.na(tensor_cores) ~ 0,
+      TRUE ~ tensor_cores
+    )
+  ) %>%
+  # Drop the temporary proxy column to keep your dictionary clean
+  select(-first_appearance)
+
+# Catching the Non-Steam Structural Zeros
+hardware_dictionary <- hardware_dictionary %>%
+  mutate(
+    tensor_cores = case_when(
+      # Keep existing valid numbers (and the zeros we already fixed)
+      !is.na(tensor_cores) ~ tensor_cores,
+      # Heuristic 1: Pre-2017 Naming Conventions (Nvidia GTX, old Quadros, old AMDs)
+      str_detect(chipset, "gtx|gt |radeon hd|r7|r9|rx 4|rx 5|firepro|quadro k|quadro m|quadro p") ~ 0,
+      # Heuristic 2: Performance Threshold (Cards this weak pre-date Tensor Cores)
+      g3dmark < 8000 & is.na(tensor_cores) ~ 0,
+      # Otherwise, leave as NA
+      TRUE ~ tensor_cores
+    )
+  )
+
+write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
+hardware_dictionary_shs_only <- hardware_dictionary %>%
+  semi_join(shs_clean, by = "chipset")
+write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
+```
+```{r}
+missing_cols <- hardware_dictionary %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
+  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary)) * 100) %>%
+  arrange(desc(Missing_Count))
+
+print(missing_cols)
+```
+```{r}
+missing_cols <- hardware_dictionary_shs_only %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
+  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary_shs_only)) * 100) %>%
+  arrange(desc(Missing_Count))
+
+print(missing_cols)
+```
+
+## Predictive Imputation for Missing g3dmark
+
+```{r}
+# Train a simple regression model on GPUs that have both g3dmark and fp32_flops
+g3d_model <- lm(
+  g3dmark ~ fp32_flops,
+  data = filter(hardware_dictionary, !is.na(g3dmark) & !is.na(fp32_flops))
+)
+# Use the model to predict the missing benchmark scores
+hardware_dictionary <- hardware_dictionary %>%
+  mutate(
+    # Generate predictions for the whole dataset
+    predicted_g3d = predict(g3d_model, newdata = .),
+    # If g3dmark is missing, fill it with the prediction.
+    # Otherwise, keep the real, historical benchmark score.
+    g3dmark = case_when(
+      is.na(g3dmark) & !is.na(fp32_flops) ~ predicted_g3d,
+      TRUE ~ g3dmark
+    )
+  ) %>%
+  # Drop the temporary prediction column and the highly-missing clock columns
+  select(-predicted_g3d, -unified_base_clock, -unified_boost_clock)
+
+write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
+hardware_dictionary_shs_only <- hardware_dictionary %>%
+  semi_join(shs_clean, by = "chipset")
+write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
+```
+```{r}
+missing_cols <- hardware_dictionary %>%
+  summarise(across(everything(), ~sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
+  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary)) * 100) %>%
+  arrange(desc(Missing_Count))
+
+print(missing_cols)
+```
+
+
+
+## Export the Unified Dataset (STRICTLY FOR MODELING)
+
+```{r}
+# # Get the baseline PPI for the end of the dataset (e.g., December 2025)
+# baseline_ppi <- ppi_clean %>%
+#   filter(month_year == max(month_year)) %>%
+#   pull(semi_ppi) %>%
+#   max()
+#
+# final_analytical_dataset <- time_series_data %>%
+#   inner_join(hardware_dictionary, by = "chipset") %>%
+#   mutate(
+#     # Create the baseline inflation control target
+#     inflation_adjusted_price = unified_price * (baseline_ppi / semi_ppi)
+#   )
+#
+# write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv", na = "NA")
 ```
