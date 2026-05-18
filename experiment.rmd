@@ -53,11 +53,10 @@ shs <- read_csv("data/shs.csv") %>% clean_names()
 ppi_data <- read_csv("data/PCU334413334413.csv") %>% clean_names()
 ```
 
-Filter out irrelevant columns and rows from the five datasets.
+Process Retail Video Cards (video-card.csv)
+Keeping NA/0 prices, dropping irrelevant string columns
 
 ```{r}
-# Process Retail Video Cards (video-card.csv)
-# Keeping NA/0 prices, dropping irrelevant string columns
 video_cards_clean <- video_cards %>%
   select(-name, -color, -length) %>%
   mutate(chipset = clean_gpu_string(chipset)) %>%
@@ -73,9 +72,12 @@ video_cards_clean <- video_cards %>%
     across(c(vram_capacity, core_clock, boost_clock), ~na_if(., -Inf)),
     avg_retail_price = na_if(avg_retail_price, NaN)
   )
+```
 
-# Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
-# Keeping price, dropping mobile segments
+Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
+Keeping price, dropping mobile segments
+
+```{r}
 benchmarks_clean <- gpu_benchmarks %>%
   mutate(
     # Create a temporary lowercase name for easy regex searching
@@ -97,9 +99,12 @@ benchmarks_clean <- gpu_benchmarks %>%
   mutate(chipset = clean_gpu_string(gpu_name)) %>%
   select(chipset, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
   distinct(chipset, .keep_all = TRUE)
+```
 
-# Process Steam Hardware Survey (shs.csv)
-# Keeping 0 percentages, filtering out CPUs/OS metrics
+Process Steam Hardware Survey (shs.csv)
+Keeping 0 percentages, filtering out CPUs/OS metrics
+
+```{r}
 shs_clean <- shs %>%
   filter(category == "Video Card Description") %>%
   # Drop laptop chips (mobility/mobile) and integrated CPU graphics (intel)
@@ -112,9 +117,12 @@ shs_clean <- shs %>%
   # Apply strict timeline filter
   filter(month_year >= ymd("2009-01-01") & month_year <= ymd("2025-12-31")) %>%
   select(month_year, chipset, percentage)
+```
 
-# Process AI Architectural Specs (ml_hardware.csv)
-# Filtering for GPUs only. Keeping all numeric specs, dropping irrelevant string columns
+Process AI Architectural Specs (ml_hardware.csv)
+Filtering for GPUs only. Keeping all numeric specs, dropping irrelevant string columns
+
+```{r}
 ml_hardware_clean <- ml_hardware %>%
   filter(type == "GPU") %>%
   mutate(chipset = clean_gpu_string(hardware_name)) %>%
@@ -139,9 +147,12 @@ ml_hardware_clean <- ml_hardware %>%
     )
   ) %>%
   distinct(chipset, .keep_all = TRUE)
+```
 
-# Process Baseline Inflation Control (FRED's PCU334413334413.csv)
-# Filtering out historical data that precedes the SHS timeline
+Process Baseline Inflation Control (FRED's PCU334413334413.csv)
+Filtering out historical data that precedes the SHS timeline
+
+```{r}
 min_shs_date <- min(shs_clean$month_year, na.rm = TRUE)
 ppi_clean <- ppi_data %>%
   rename(date = observation_date, semi_ppi = pcu334413334413) %>%
@@ -152,7 +163,11 @@ ppi_clean <- ppi_data %>%
   # Apply strict timeline filter
   filter(month_year >= ymd("2009-01-01") & month_year <= ymd("2025-12-31")) %>%
   select(month_year, semi_ppi)
+```
 
+Write the Clean Datasets to CSV
+
+```{r}
 write_csv(video_cards_clean, "data/video_cards_clean.csv")
 write_csv(benchmarks_clean, "data/benchmarks_clean.csv")
 write_csv(shs_clean, "data/shs_clean.csv")
@@ -160,7 +175,7 @@ write_csv(ml_hardware_clean, "data/ml_hardware_clean.csv")
 write_csv(ppi_clean, "data/ppi_clean.csv")
 ```
 
-Export the Static Dictionary for Auditing (No Repeated Rows)
+Export the Static Dictionary (No Repeated Rows)
 Use this to easily see which exact GPUs are missing VRAM, FLOPs, or Prices
 
 ```{r}
@@ -215,7 +230,7 @@ hardware_dictionary_shs_only <- hardware_dictionary %>%
 write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
 ```
 
-Export the Temporal Data for Auditing
+Export the Temporal Data
 Use this to track pure market share and inflation trends over time
 
 ```{r}
@@ -225,7 +240,7 @@ time_series_data <- shs_clean %>%
 write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
 ```
 
-The Unified Dataset (STRICTLY FOR ISLR MODELING)
+Export the Unified Dataset (STRICTLY FOR MODELING)
 
 ```{r}
 final_analytical_dataset <- time_series_data %>%
