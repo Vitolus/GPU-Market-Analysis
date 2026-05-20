@@ -23,12 +23,12 @@ clean_gpu_string <- function(name_col) {
   name_col %>%
     str_to_lower() %>%
     # Remove brand fluff
-    str_remove_all("msi|asus|gigabyte|zotac|evga|sapphire|powercolor|pny") %>%
-    str_remove_all("nvidia|amd|ati|founders edition") %>%
+    str_remove_all("\\b(msi|asus|gigabyte|zotac|evga|sapphire|powercolor|pny)\\b") %>%
+    str_remove_all("\\b(nvidia|amd|ati|founders|collectors|anniversary|frontier|edition|50th)\\b") %>%
     # Destroy hyphens followed by numbers (fixes the " - 512" issue)
     str_remove_all("-\\s*[0-9]+") %>%
-    # Target VRAM (3gb), Wattage (75w), minor variants (g5, ddr4), and specific editions (se, oem, lhr, x2)
-    str_remove_all("\\b([0-9]+gb|[0-9]+w|g[56]|ddr[0-9]|se|oem|lhr|x2|sdi)\\b") %>%
+    # Target VRAM (3gb), Wattage (75w), minor variants (g5, ddr4), and specific editions (se, oem, lhr, x2, sff)
+    str_remove_all("\\b([0-9]+gb|[0-9]+w|g[56]|ddr[0-9]|se|oem|lhr|x2|sdi|sff)\\b") %>%
     # Remove the word "series" from SHS
     str_remove_all("\\bseries\\b") %>%
     # Squish multiple spaces down to a single space
@@ -44,6 +44,7 @@ clean_gpu_string <- function(name_col) {
 ```
 
 We load the five disparate datasets required for the high-dimensional dataset.
+
 ```{r}
 # Assuming files are in the working directory
 video_cards <- read_csv("data/video-card.csv") %>% clean_names()
@@ -71,7 +72,8 @@ video_cards_clean <- video_cards %>%
   mutate(
     across(c(vram_capacity, core_clock, boost_clock), ~na_if(., -Inf)),
     avg_retail_price = na_if(avg_retail_price, NaN)
-  )
+  ) %>%
+  distinct(chipset, .keep_all = TRUE)
 ```
 
 Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
@@ -96,7 +98,10 @@ benchmarks_clean <- gpu_benchmarks %>%
   ) %>%
   # Now apply the strict filter with confidence that the data is accurately tagged
   filter(category %in% c("Desktop", "Workstation")) %>%
-  mutate(chipset = clean_gpu_string(gpu_name)) %>%
+  mutate(
+    chipset = clean_gpu_string(gpu_name),
+    chipset = str_replace(chipset, "radeon rx 570x", "radeon rx 570")
+  ) %>%
   select(chipset, category, g3dmark, g2dmark, tdp, benchmark_price = price) %>%
   distinct(chipset, .keep_all = TRUE)
 ```
@@ -145,6 +150,118 @@ ml_hardware_clean <- ml_hardware %>%
   distinct(chipset, .keep_all = TRUE)
 ```
 
+## Add missing cards' informations manually based on producers' websites and Wikipedia
+
+```{r}
+missing_gpus <- tibble(
+  chipset = c(
+    "geforce rtx 5050", "geforce rtx 5060", "geforce rtx 5060 ti", "geforce rtx 5070",
+    "geforce rtx 5070 ti", "geforce rtx 5080", "geforce rtx 5090",
+    "rtx 4000 ada generation", "rtx 5000 ada generation",
+    "radeon rx 9060 xt", "radeon rx 9070", "radeon rx 9070 xt",
+    "arc b570", "arc b580", "arc a310", "arc a380", "arc a580", "arc a750", "arc a770",
+    "geforce rtx 4060", "geforce rtx 4060 ti", "geforce rtx 4070", "geforce rtx 4070 super",
+    "geforce rtx 4070 ti", "geforce rtx 4070 ti super", "geforce rtx 4080 super",
+    "radeon rx 7600", "radeon rx 7600 xt", "radeon rx 7700 xt", "radeon rx 7800 xt",
+    "radeon rx 7900 gre", "radeon rx 7900 xt",
+    "geforce rtx 3050", "geforce rtx 3060", "geforce rtx 3060 ti", "geforce rtx 3070",
+    "geforce rtx 3070 ti", "geforce rtx 3080", "geforce rtx 3080 ti", "geforce rtx 3090", "geforce rtx 3090 ti",
+    "geforce rtx 2060", "geforce rtx 2060 super", "geforce rtx 2070", "geforce rtx 2070 super",
+    "geforce rtx 2080", "geforce rtx 2080 super", "geforce rtx 2080 ti",
+    "radeon rx 6650 xt", "radeon rx 6750 xt", "radeon rx 6950 xt",
+    "rtx 2000 ada generation", "rtx 2000e ada generation", "rtx 4500 ada generation",
+    "radeon pro w7500", "radeon pro w7600", "radeon pro w7700", "radeon pro w7800", "radeon pro w7900",
+    "radeon pro w6600", "radeon pro w6800",
+    "radeon rx 6500 xt", "radeon rx 6600", "radeon rx 6600 xt", "radeon rx 6700 xt",
+    "radeon rx 6800", "radeon rx 6800 xt", "radeon rx 6900 xt"
+  ),
+
+  ml_release_price = c(
+    249, 299, 429, 549, 749, 999, 1999,
+    1250, 4000,
+    399, 549, 599,
+    219, 249, 110, 139, 179, 249, 329,
+    299, 399, 599, 599, 799, 799, 999,
+    269, 329, 449, 499, 549, 899,
+    249, 329, 399, 499, 599, 699, 1199, 1499, 1999,
+    349, 399, 499, 499, 699, 699, 999,
+    399, 549, 1099,
+    625, 625, 2250,
+    429, 599, 999, 2499, 3999,
+    649, 2249,
+    199, 329, 379, 479, 579, 649, 999
+  ),
+
+  ml_memory = c(
+    8, 8, 16, 12, 16, 16, 32,
+    20, 32,
+    16, 16, 16,
+    10, 12, 4, 6, 8, 8, 16,
+    8, 8, 12, 12, 12, 16, 16,
+    8, 16, 12, 16, 16, 20,
+    8, 12, 8, 8, 8, 10, 12, 24, 24,
+    6, 8, 8, 8, 8, 8, 11,
+    8, 12, 16,
+    16, 16, 24,
+    8, 8, 16, 32, 48,
+    8, 32,
+    4, 8, 8, 12, 16, 16, 16
+  ),
+
+  ml_tdp = c(
+    130, 145, 180, 250, 300, 360, 575,
+    130, 250,
+    160, 220, 304,
+    150, 190, 75, 75, 185, 225, 225,
+    115, 160, 200, 220, 285, 285, 320,
+    165, 190, 245, 263, 260, 300,
+    130, 170, 200, 220, 290, 320, 350, 350, 450,
+    160, 175, 175, 215, 215, 250, 250,
+    180, 250, 335,
+    70, 50, 210,
+    70, 130, 190, 260, 295,
+    130, 250,
+    107, 132, 160, 230, 250, 300, 300
+  ),
+
+  fp32_flops = c(
+    13.17, 19.18, 23.70, 30.84, 43.94, 56.28, 104.80,
+    26.70, 65.30,
+    25.64, 36.13, 48.66,
+    12.70, 13.67, 3.07, 4.09, 10.42, 14.64, 17.20,
+    15.11, 22.06, 29.15, 35.48, 40.09, 44.10, 52.22,
+    21.75, 22.57, 35.17, 37.32, 43.01, 51.48,
+    9.10, 12.74, 16.20, 20.31, 21.75, 29.77, 34.10, 35.58, 40.00,
+    6.45, 7.18, 7.46, 9.06, 10.07, 11.15, 13.45,
+    10.79, 13.31, 23.65,
+    12.0, 8.9, 39.6,
+    12.2, 16.6, 28.3, 45.3, 61.3,
+    10.4, 26.7,
+    5.77, 8.93, 10.60, 13.21, 16.17, 20.74, 23.04
+  ),
+
+  tensor_cores = c(
+    80, 120, 144, 192, 280, 336, 680,
+    192, 400,
+    64, 112, 128,
+    144, 160, 96, 128, 384, 448, 512,
+    96, 136, 184, 224, 240, 264, 320,
+    64, 64, 108, 120, 160, 168,
+    80, 112, 152, 184, 192, 272, 320, 328, 336,
+    240, 272, 288, 320, 368, 384, 544,
+    32, 40, 80,
+    88, 88, 240,
+    28, 32, 48, 70, 96,
+    28, 60,
+    16, 28, 32, 40, 60, 72, 80
+  )
+)
+# Bind the missing cards BEFORE the main dataset so our complete specs overwrite any NAs
+ml_hardware_clean <- missing_gpus %>%
+  bind_rows(ml_hardware_clean) %>%
+  distinct(chipset, .keep_all = TRUE)
+```
+
 Process Baseline Inflation Control (FRED's PCU334413334413.csv)
 Filtering out historical data that precedes the SHS timeline
 
@@ -171,21 +288,23 @@ write_csv(ml_hardware_clean, "data/ml_hardware_clean.csv")
 write_csv(ppi_clean, "data/ppi_clean.csv")
 ```
 
-Export the Static Dictionary (No Repeated Rows)
-Use this to easily see which exact GPUs are missing VRAM, FLOPs, or Prices
+Prepare and export the final GPUs Dictionary
 
 ```{r}
+# Full Join
 hardware_dictionary <- video_cards_clean %>%
   full_join(benchmarks_clean, by = "chipset") %>%
   full_join(ml_hardware_clean, by = "chipset") %>%
+# Category Imputation
   mutate(
     # Fixes NA categories for newer cards not in the benchmark dataset
     category = case_when(
       !is.na(category) ~ category, # Keep existing valid categories
-      str_detect(chipset, "rtx|gtx|rx|radeon hd|arc a|arc b|geforce") ~ "Desktop", # Consumer gaming tags
+      str_detect(chipset, "geforce rtx|gtx|rx|radeon hd|arc a|arc b|geforce") ~ "Desktop", # Consumer gaming tags
       str_detect(chipset, "pro|quadro|tesla|instinct") ~ "Workstation", # Enterprise tags
-      TRUE ~ "Workstation" # Default remaining unknowns to Workstation as requested
+      TRUE ~ "Workstation" # Default remaining unknowns to Workstation
     ),
+# Consolidate Overlapping Columns (Averaging)
     # Convert all 0 values to NA across overlapping columns
     across(
       c(avg_retail_price, benchmark_price, ml_release_price,
@@ -195,28 +314,87 @@ hardware_dictionary <- video_cards_clean %>%
         vram_capacity, ml_memory),
       ~na_if(., 0)
     ),
-    # Calculate Unified Means (suppressWarnings hides NaN warnings if all columns are NA)
+    # Calculate Unified Means (suppressWarnings hides NaN warnings if all are NA)
     unified_price = suppressWarnings(rowMeans(cbind(avg_retail_price, benchmark_price, ml_release_price), na.rm = TRUE)),
     unified_base_clock = suppressWarnings(rowMeans(cbind(core_clock, ml_base_clock), na.rm = TRUE)),
     unified_boost_clock = suppressWarnings(rowMeans(cbind(boost_clock, ml_boost_clock), na.rm = TRUE)),
     unified_tdp = suppressWarnings(rowMeans(cbind(tdp, ml_tdp), na.rm = TRUE)),
-    unified_memory = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory), na.rm = TRUE)),
-    # Target Casting for Logistic Regression
-    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
-    # Ensure categorical features are appropriately typed
-    category = as.factor(category)
+    unified_memory = suppressWarnings(rowMeans(cbind(vram_capacity, ml_memory), na.rm = TRUE))
   ) %>%
-  # Convert any NaN (caused by averaging all-NA columns) back to proper NA for clean CSV export
+  # Convert any mathematical NaN results back to proper NA
   mutate(across(starts_with("unified_"), ~na_if(., NaN))) %>%
-  # Drop the original messy columns
+  # Drop the original redundant columns
   select(
     -avg_retail_price, -benchmark_price, -ml_release_price,
     -core_clock, -ml_base_clock,
     -boost_clock, -ml_boost_clock,
     -tdp, -ml_tdp,
     -vram_capacity, -ml_memory
+  )
+```
+
+Regression Imputation for Missing Benchmarks
+
+```{r}
+# Train a simple model on GPUs that have both g3dmark and fp32_flops
+g3d_model <- lm(g3dmark ~ fp32_flops, data = filter(hardware_dictionary, !is.na(g3dmark) & !is.na(fp32_flops)))
+g2d_model <- lm(g2dmark ~ fp32_flops, data = filter(hardware_dictionary, !is.na(g2dmark) & !is.na(fp32_flops)))
+
+hardware_dictionary <- hardware_dictionary %>%
+  mutate(
+    predicted_g3d = predict(g3d_model, newdata = .),
+    predicted_g2d = predict(g2d_model, newdata = .),
+    # If g3dmark or g2dmark are missing (new cards), fill it with the prediction based on FLOPs
+    g3dmark = case_when(
+      is.na(g3dmark) & !is.na(fp32_flops) ~ predicted_g3d,
+      TRUE ~ g3dmark
+    ),
+    g2dmark = case_when(
+      is.na(g2dmark) & !is.na(fp32_flops) ~ predicted_g2d,
+      TRUE ~ g2dmark
+    )
   ) %>%
-  drop_na(unified_price)
+  # Drop the temporary prediction columns
+  select(-predicted_g3d, -predicted_g2d)
+
+# Structural Zeros & Final Clean Up
+hardware_dictionary <- hardware_dictionary %>%
+  mutate(
+    # Fix Tensor Cores for pre-2018 cards
+    tensor_cores = case_when(
+      !is.na(tensor_cores) ~ tensor_cores,
+      str_detect(chipset, "gtx|gt |radeon hd|r7|r9|rx 4|rx 5|firepro|quadro k|quadro m|quadro p|titan x|titan z|titan xp|vega|radeon vii|tesla|p40|p100|m40|radeon pro duo|radeon pro vii|radeon pro ssg|radeon pro w5|radeon pro wx") ~ 0,
+      g3dmark < 8000 & is.na(tensor_cores) ~ 0,
+      TRUE ~ tensor_cores
+    )
+  ) %>%
+  # THE CRITICAL FILTER: Drop rows where the final price is entirely missing
+  drop_na(unified_price) %>%
+  # Grouped median imputation to rescue slightly missing Memory and TDP values
+  group_by(category) %>%
+  mutate(
+    unified_memory = ifelse(is.na(unified_memory), median(unified_memory, na.rm = TRUE), unified_memory),
+    unified_tdp = ifelse(is.na(unified_tdp), median(unified_tdp, na.rm = TRUE), unified_tdp)
+  ) %>%
+  ungroup() %>%
+  # Cast classification target
+  mutate(
+    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
+    category = as.factor(category)
+  ) %>%
+  # Drop unified clock speeds (they are highly missing and redundant now that g3dmark is populated)
+  select(-unified_base_clock, -unified_boost_clock) %>%
+  mutate(
+    # Round and force structural/performance metrics to be integers
+    across(
+      c(g3dmark, g2dmark, tensor_cores, unified_tdp, unified_memory),
+      ~ as.integer(round(.))
+    ),
+    # Ensure price remains strictly a floating point (double/numeric)
+    unified_price = round(as.numeric(unified_price), 2)
+  ) %>%
+  # Drop fp32_flops (to prevent perfect collinearity in the ISLR models)
+  select(-fp32_flops)
 
 write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
 
@@ -259,124 +437,4 @@ missing_rows <- hardware_dictionary %>%
   arrange(desc(total_missing_specs))
 
 print(missing_rows)
-```
-
-Tensor cores were invented in 2018, so all pre-2018 cards will be missing this spec. Thus we can set this to 0 for all cards released before 2018.
-```{r}
-# Create a proxy release date from Steam telemetry
-gpu_release_proxy <- shs_clean %>%
-  group_by(chipset) %>%
-  summarise(first_appearance = min(month_year, na.rm = TRUE))
-
-# Safely Impute Structural Zeros for Pre-2017 GPUs
-hardware_dictionary <- hardware_dictionary %>%
-  # Temporarily join the appearance dates
-  left_join(gpu_release_proxy, by = "chipset") %>%
-  mutate(
-    # If the GPU existed before 2017 and tensor_cores is NA, it physically has 0.
-    # Otherwise, leave the column exactly as it is.
-    tensor_cores = case_when(
-      year(first_appearance) < 2017 & is.na(tensor_cores) ~ 0,
-      TRUE ~ tensor_cores
-    )
-  ) %>%
-  # Drop the temporary proxy column to keep your dictionary clean
-  select(-first_appearance)
-
-# Catching the Non-Steam Structural Zeros
-hardware_dictionary <- hardware_dictionary %>%
-  mutate(
-    tensor_cores = case_when(
-      # Keep existing valid numbers (and the zeros we already fixed)
-      !is.na(tensor_cores) ~ tensor_cores,
-      # Heuristic 1: Pre-2017 Naming Conventions (Nvidia GTX, old Quadros, old AMDs)
-      str_detect(chipset, "gtx|gt |radeon hd|r7|r9|rx 4|rx 5|firepro|quadro k|quadro m|quadro p") ~ 0,
-      # Heuristic 2: Performance Threshold (Cards this weak pre-date Tensor Cores)
-      g3dmark < 8000 & is.na(tensor_cores) ~ 0,
-      # Otherwise, leave as NA
-      TRUE ~ tensor_cores
-    )
-  )
-
-write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
-hardware_dictionary_shs_only <- hardware_dictionary %>%
-  semi_join(shs_clean, by = "chipset")
-write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
-```
-```{r}
-missing_cols <- hardware_dictionary %>%
-  summarise(across(everything(), ~sum(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
-  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary)) * 100) %>%
-  arrange(desc(Missing_Count))
-
-print(missing_cols)
-```
-```{r}
-missing_cols <- hardware_dictionary_shs_only %>%
-  summarise(across(everything(), ~sum(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
-  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary_shs_only)) * 100) %>%
-  arrange(desc(Missing_Count))
-
-print(missing_cols)
-```
-
-## Predictive Imputation for Missing g3dmark
-
-```{r}
-# Train a simple regression model on GPUs that have both g3dmark and fp32_flops
-g3d_model <- lm(
-  g3dmark ~ fp32_flops,
-  data = filter(hardware_dictionary, !is.na(g3dmark) & !is.na(fp32_flops))
-)
-# Use the model to predict the missing benchmark scores
-hardware_dictionary <- hardware_dictionary %>%
-  mutate(
-    # Generate predictions for the whole dataset
-    predicted_g3d = predict(g3d_model, newdata = .),
-    # If g3dmark is missing, fill it with the prediction.
-    # Otherwise, keep the real, historical benchmark score.
-    g3dmark = case_when(
-      is.na(g3dmark) & !is.na(fp32_flops) ~ predicted_g3d,
-      TRUE ~ g3dmark
-    )
-  ) %>%
-  # Drop the temporary prediction column and the highly-missing clock columns
-  select(-predicted_g3d, -unified_base_clock, -unified_boost_clock)
-
-write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
-hardware_dictionary_shs_only <- hardware_dictionary %>%
-  semi_join(shs_clean, by = "chipset")
-write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
-```
-```{r}
-missing_cols <- hardware_dictionary %>%
-  summarise(across(everything(), ~sum(is.na(.)))) %>%
-  pivot_longer(everything(), names_to = "Feature", values_to = "Missing_Count") %>%
-  mutate(Missing_Percentage = (Missing_Count / nrow(hardware_dictionary)) * 100) %>%
-  arrange(desc(Missing_Count))
-
-print(missing_cols)
-```
-
-
-
-## Export the Unified Dataset (STRICTLY FOR MODELING)
-
-```{r}
-# # Get the baseline PPI for the end of the dataset (e.g., December 2025)
-# baseline_ppi <- ppi_clean %>%
-#   filter(month_year == max(month_year)) %>%
-#   pull(semi_ppi) %>%
-#   max()
-#
-# final_analytical_dataset <- time_series_data %>%
-#   inner_join(hardware_dictionary, by = "chipset") %>%
-#   mutate(
-#     # Create the baseline inflation control target
-#     inflation_adjusted_price = unified_price * (baseline_ppi / semi_ppi)
-#   )
-#
-# write_csv(final_analytical_dataset, "data/final_analytical_dataset.csv", na = "NA")
 ```
