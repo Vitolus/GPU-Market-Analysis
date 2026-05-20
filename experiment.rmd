@@ -485,28 +485,15 @@ baseline_ppi <- time_series_data %>%
   filter(month_year == ymd("2025-12-01")) %>%
   pull(semi_ppi) %>%
   unique()
-# Extract the earliest PPI for each GPU (Proxy Release Date)
-gpu_release_proxy <- time_series_data %>%
-  group_by(chipset) %>%
-  arrange(month_year) %>%
-  slice(1) %>% # Grabs the very first appearance of each GPU
-  select(chipset, release_ppi = semi_ppi)
-
-# Join the proxy dates, match them to the historical PPI, and adjust the price
-hardware_dictionary <- hardware_dictionary %>%
-  left_join(gpu_release_proxy, by = "chipset") %>%
-  mutate(
-    # Bleeding-edge and Enterprise cards not in Steam telemetry coalesce to the 2025 baseline
-    release_ppi = coalesce(release_ppi, baseline_ppi),
-    # Calculate the true economic value (Nominal Price scaled by Inflation)
-    inflation_adjusted_price = unified_price * (baseline_ppi / release_ppi)
-  ) %>%
-  select(-release_ppi) # Keep dictionary clean
-hardware_dictionary_shs_only <- hardware_dictionary %>%
-  semi_join(shs_clean, by = "chipset")
 
 final_modeling_dataset <- time_series_data %>%
+  # Inner join inherently filters out laptop telemetry and merges specs
   inner_join(hardware_dictionary, by = "chipset") %>%
+  mutate(
+    # Dynamic Inflation Adjustment:
+    # Calculates the real value of the GPU for that specific month in 2025 dollars
+    inflation_adjusted_price = round(unified_price * (baseline_ppi / semi_ppi), 2)
+  ) %>%
   select(
     month_year, chipset, percentage, semi_ppi,
     category, g3dmark, g2dmark, tensor_cores,
