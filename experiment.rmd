@@ -54,7 +54,7 @@ shs <- read_csv("data/shs.csv") %>% clean_names()
 ppi_data <- read_csv("data/PCU334413334413.csv") %>% clean_names()
 ```
 
-Process Retail Video Cards (video-card.csv)
+#### Process Retail Video Cards (video-card.csv)
 Keeping NA/0 prices, dropping irrelevant string columns
 
 ```{r}
@@ -76,7 +76,7 @@ video_cards_clean <- video_cards %>%
   distinct(chipset, .keep_all = TRUE)
 ```
 
-Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
+#### Process Traditional Benchmarks (GPU_benchmarks_v7.csv)
 Keeping price, dropping mobile segments
 
 ```{r}
@@ -106,7 +106,7 @@ benchmarks_clean <- gpu_benchmarks %>%
   distinct(chipset, .keep_all = TRUE)
 ```
 
-Process Steam Hardware Survey (shs.csv)
+#### Process Steam Hardware Survey (shs.csv)
 Keeping 0 percentages, filtering out CPUs/OS metrics
 
 ```{r}
@@ -124,7 +124,7 @@ shs_clean <- shs %>%
   select(month_year, chipset, percentage)
 ```
 
-Process AI Architectural Specs (ml_hardware.csv)
+#### Process AI Architectural Specs (ml_hardware.csv)
 Filtering for GPUs only. Keeping all numeric specs, dropping irrelevant string columns
 
 ```{r}
@@ -150,7 +150,7 @@ ml_hardware_clean <- ml_hardware %>%
   distinct(chipset, .keep_all = TRUE)
 ```
 
-## Add missing cards' informations manually based on producers' websites and Wikipedia
+Add missing cards' informations manually based on producers' websites and Wikipedia
 
 ```{r}
 missing_gpus <- tibble(
@@ -262,7 +262,7 @@ ml_hardware_clean <- missing_gpus %>%
   distinct(chipset, .keep_all = TRUE)
 ```
 
-Process Baseline Inflation Control (FRED's PCU334413334413.csv)
+#### Process Baseline Inflation Control (FRED's PCU334413334413.csv)
 Filtering out historical data that precedes the SHS timeline
 
 ```{r}
@@ -288,7 +288,7 @@ write_csv(ml_hardware_clean, "data/ml_hardware_clean.csv")
 write_csv(ppi_clean, "data/ppi_clean.csv")
 ```
 
-Prepare and export the final GPUs Dictionary
+#### Prepare and export the GPUs Dictionary
 
 ```{r}
 # Full Join
@@ -333,7 +333,7 @@ hardware_dictionary <- video_cards_clean %>%
   )
 ```
 
-Regression Imputation for Missing Benchmarks
+#### Regression Imputation for Missing Benchmarks
 
 ```{r}
 # Train a simple model on GPUs that have both g3dmark and fp32_flops
@@ -411,21 +411,6 @@ hardware_dictionary <- hardware_dictionary %>%
   select(-fp32_flops)
 
 write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
-
-hardware_dictionary_shs_only <- hardware_dictionary %>%
-  semi_join(shs_clean, by = "chipset")
-
-write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
-```
-
-Export the Temporal Data
-Use this to track pure market share and inflation trends over time
-
-```{r}
-time_series_data <- shs_clean %>%
-  left_join(ppi_clean, by = "month_year")
-
-write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
 ```
 
 # Missing Data Analysis
@@ -448,15 +433,89 @@ All the above results belong to workstation gpus and a notebook one. The noteboo
 
 ```{r}
 missing_rows <- hardware_dictionary %>%
-  mutate(total_missing_specs = rowSums(is.na(select(., everything())))) %>%
+  mutate(total_missing_specs = rowSums(is.na(.))) %>%
+  filter(total_missing_specs > 0) %>% # Only keep rows that actually have NAs
   select(chipset, category, total_missing_specs) %>%
   arrange(desc(total_missing_specs))
 
-head(missing_rows, 10)
+print(missing_rows)
 ```
 
 The above table shows which GPUs are missing specifications and will be dropped: we see the "radeon rx 6600m" card that only misses the tensor cores value, but as discussed above, it is a notebook card (misclassified as a Desktop card) that will be dropped.
 
-```{r}
+# Final Data Preparation
 
+#### Drop GPUs with Missing Specifications
+
+```{r}
+hardware_dictionary <- hardware_dictionary %>%
+  drop_na()
+hardware_dictionary_shs_only <- hardware_dictionary %>%
+  semi_join(shs_clean, by = "chipset")
+
+write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
+write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
+```
+
+#### Filter SHS Telemetry to Desktop/Workstation Only
+We use the final hardware dictionary as a strict whitelist to instantly purge all laptops, mobile chips, and integrated graphics from the market share data.
+
+```{r}
+shs_clean <- shs_clean %>%
+  semi_join(hardware_dictionary, by = "chipset")
+
+write_csv(shs_clean, "data/shs_clean.csv")
+```
+
+#### Export the Temporal Data
+Use this to track pure market share and inflation trends over time
+
+```{r}
+time_series_data <- shs_clean %>%
+  left_join(ppi_clean, by = "month_year")
+
+write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
+```
+
+
+
+```{r}
+# Extract the absolute baseline PPI for our target month (December 2025)
+baseline_ppi <- time_series_data %>%
+  filter(month_year == ymd("2025-12-01")) %>%
+  pull(semi_ppi) %>%
+  unique()
+# Extract the earliest PPI for each GPU (Proxy Release Date)
+gpu_release_proxy <- time_series_data %>%
+  group_by(chipset) %>%
+  arrange(month_year) %>%
+  slice(1) %>% # Grabs the very first appearance of each GPU
+  select(chipset, release_ppi = semi_ppi)
+
+# Join the proxy dates, match them to the historical PPI, and adjust the price
+hardware_dictionary <- hardware_dictionary %>%
+  left_join(gpu_release_proxy, by = "chipset") %>%
+  mutate(
+    # Bleeding-edge and Enterprise cards not in Steam telemetry coalesce to the 2025 baseline
+    release_ppi = coalesce(release_ppi, baseline_ppi),
+    # Calculate the true economic value (Nominal Price scaled by Inflation)
+    inflation_adjusted_price = unified_price * (baseline_ppi / release_ppi)
+  ) %>%
+  select(-release_ppi) # Keep dictionary clean
+hardware_dictionary_shs_only <- hardware_dictionary %>%
+  semi_join(shs_clean, by = "chipset")
+
+final_modeling_dataset <- time_series_data %>%
+  inner_join(hardware_dictionary, by = "chipset") %>%
+  select(
+    month_year, chipset, percentage, semi_ppi,
+    category, g3dmark, g2dmark, tensor_cores,
+    unified_tdp, unified_memory, is_workstation,
+    unified_price, inflation_adjusted_price
+  ) %>%
+  arrange(month_year, desc(percentage))
+
+write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
+write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
+write_csv(final_modeling_dataset, "data/final_modeling_dataset.csv", na = "NA")
 ```
