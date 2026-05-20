@@ -393,6 +393,20 @@ hardware_dictionary <- hardware_dictionary %>%
     # Ensure price remains strictly a floating point (double/numeric)
     unified_price = round(as.numeric(unified_price), 2)
   ) %>%
+  mutate(
+    tensor_cores = case_when(
+      chipset == "quadro gv100" ~ 640,
+      chipset == "rtx 6000 ada generation" ~ 568,
+      chipset == "rtx a2000" ~ 104,
+      chipset == "rtx a4500" ~ 224,
+      chipset == "titan rtx" ~ 576,
+      chipset == "instinct mi300x" ~ 1216,
+      chipset == "radeon instinct mi250x" ~ 880,
+      chipset == "hgx h20" ~ 456,
+      chipset == "huawei ascend 910b" ~ 25,
+      TRUE ~ tensor_cores
+    )
+  ) %>%
   # Drop fp32_flops (to prevent perfect collinearity in the ISLR models)
   select(-fp32_flops)
 
@@ -416,7 +430,7 @@ write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
 
 # Missing Data Analysis
 
-Column-Level Missingness: Which features are missing the most?
+#### Column-Level Missingness: Which features are missing the most?
 
 ```{r}
 missing_cols <- hardware_dictionary %>%
@@ -428,7 +442,9 @@ missing_cols <- hardware_dictionary %>%
 print(missing_cols)
 ```
 
-Row-Level Missingness: Which specific GPUs are missing the most data?
+All the above results belong to workstation gpus and a notebook one. The notebook card will be dropped per analysis scope, while regarding the other four, since they also have the fp32 flops value missing, we can't predict the performance marks. Thus, considering the missing data is so low, we will drop these cards from the dataset.
+
+#### Row-Level Missingness: Which specific GPUs are missing the most data?
 
 ```{r}
 missing_rows <- hardware_dictionary %>%
@@ -436,5 +452,11 @@ missing_rows <- hardware_dictionary %>%
   select(chipset, category, total_missing_specs) %>%
   arrange(desc(total_missing_specs))
 
-print(missing_rows)
+head(missing_rows, 10)
+```
+
+The above table shows which GPUs are missing specifications and will be dropped: we see the "radeon rx 6600m" card that only misses the tensor cores value, but as discussed above, it is a notebook card (misclassified as a Desktop card) that will be dropped.
+
+```{r}
+
 ```
