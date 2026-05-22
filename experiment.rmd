@@ -561,16 +561,16 @@ test_data  <- model_data[-train_index, ]
 
 # Train the full model and apply automated feature selection (Stepwise AIC)
 model_full <- glm(is_workstation ~ ., data = train_data, family = "binomial")
-model_best <- step(model_full, direction = "both", trace = 0, scope = list(
-    lower = ~ tensor_cores,            # The minimum model (variables here cannot be removed)
-    upper = formula(model_full)        # The maximum model (all available variables)
-  ))
+model_best <- step(model_full, direction = "both", trace = 0)
 
 # Output Inference Results (Econometric Analysis)
 summary(model_best)
 ```
 
-Without forcibly including tensor_cores, the step function would drop it and the AIC would be 390 instead of 391. But we prefer to keep it in the model to better understand which features are most important for the AI tax.
+Forcing the inclusion of tensor_cores, the AIC would be 391 instead of 390 and the row in the coefficient table would be:
+
+               Estimate Std. Error z value Pr(>|z|)
+tensor_cores   -0.39232    0.18940  -2.071 0.038320 *
 
 ```{r}
 # Calculate and Display Odds Ratios
@@ -659,18 +659,39 @@ auc(roc_curve)
 ```
 
 ```{r}
-lda_model <- lda(is_workstation ~ unified_memory + tensor_cores + g3dmark, data = train_data)
+lda_model <- lda(is_workstation ~ unified_memory + g3dmark + g2dmark + unified_tdp, data = train_data)
 lda_preds <- predict(lda_model, test_data)
 confusionMatrix(lda_preds$class, test_data$is_workstation)
 ```
 
 ```{r}
-roc_curve <- roc(test_data$is_workstation, lda_preds$posterior[, 2])
+roc_curve <- roc(test_data$is_workstation, lda_preds$posterior[, "1"])
 plot(roc_curve, main = "ROC Curve for LDA Classification", col = "green", lwd = 2)
 auc(roc_curve)
 ```
 
-To classify the hardware, both Logistic Regression and Linear Discriminant Analysis (LDA) were evaluated. While LDA is typically more stable when classes are well-separated, it assumes equal covariance matrices across classes. The GPU market is highly heteroscedastic: consumer silicon is tightly clustered in price and specifications, whereas enterprise workstation silicon exhibits massive variance (e.g., reaching up to $35,000 and 192GB VRAM). Because this violates LDA's core assumptions, the model exhibited severe systemic bias (McNemar's p < 0.001), achieving 100% sensitivity but collapsing to 43.4% specificity. Logistic Regression, which does not assume equal covariance, proved far superior, achieving a highly balanced accuracy with an impressive AUC of 0.9022.
+o classify the hardware, both Logistic Regression and Linear Discriminant Analysis (LDA) were evaluated. Initially, the inclusion of specific architectural metrics (e.g., Tensor Cores) introduced massive, uncontrolled variance into the Workstation class, violently violating LDA’s core assumption of homoscedasticity (equal covariance matrices across classes). This caused the initial LDA model to exhibit severe systemic bias, achieving 100% sensitivity but collapsing to 43.4% specificity (McNemar's p < 0.001).
+
+However, by dropping the tensor_cores predictor, the revised LDA model restored mathematical balance: specificity recovered to 78.26%, and McNemar’s Test returned a non-significant result (p = 0.4237), proving the model was no longer systemically biased toward the Consumer class.
+
+```{r}
+qda_model <- qda(
+  is_workstation ~ g3dmark + g2dmark + unified_tdp + unified_memory,
+  data = train_data
+)
+qda_preds <- predict(qda_model, test_data)
+confusionMatrix(qda_preds$class, test_data$is_workstation)
+```
+
+```{r}
+roc_curve <- roc(test_data$is_workstation, qda_preds$posterior[, "1"])
+plot(roc_curve, main = "ROC Curve for QDA Classification", col = "red", lwd = 2)
+auc(roc_curve)
+```
+
+To explicitly model the heteroscedasticity of the GPU market—where consumer silicon is tightly clustered but enterprise silicon exhibits massive variance—Quadratic Discriminant Analysis (QDA) was deployed. Because QDA estimates a separate covariance matrix for each class, it generated the highest ranking accuracy of any model tested, achieving a peak AUC of 0.9292.
+
+Despite this superior theoretical fit, QDA presented a classic thresholding paradox. At the default 0.5 probability threshold, the towering density of the tightly clustered Consumer class mathematically overwhelmed the flatter density distribution of the Workstation class, causing specificity to drop to 58.70%. This demonstrates that while QDA perfectly mapped the non-linear scaling of the market, deploying it effectively in this imbalanced domain requires manually lowering the decision threshold (e.g., to 0.3) to counteract the density skew and accurately capture enterprise hardware.
 
 ## Lasso Regression: Regularization & Feature Selection
 
