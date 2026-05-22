@@ -13,6 +13,9 @@ library(lubridate)
 library(stringr)
 library(janitor)
 library(caret)
+library(readr)
+library(ggplot2)
+library(broom)
 ```
 
 # Data Processing
@@ -527,80 +530,109 @@ Yielding large, positive, and statistically significant coefficients for specifi
 
 ```{r}
 gpu_data <- read_csv("data/hardware_dictionary_static.csv")
-# Data Preparation: Create the binary target variable
-# We map 'Workstation' to 1 (Enterprise/Professional) and 'Desktop' to 0 (Consumer)
+
+# Data Preparation: Create the binary target variable (strictly as a factor for caret)
 gpu_data$is_workstation <- as.factor(ifelse(gpu_data$category == "Workstation", 1, 0))
 
-# Ensure predictors are numeric
-gpu_data$unified_memory <- as.numeric(gpu_data$unified_memory)
-gpu_data$unified_tdp <- as.numeric(gpu_data$unified_tdp)
-gpu_data$tensor_cores <- as.numeric(gpu_data$tensor_cores)
-gpu_data$g3dmark <- as.numeric(gpu_data$g3dmark)
-gpu_data$g2dmark <- as.numeric(gpu_data$g2dmark)
+# Ensure predictors are numeric and scale them for mathematical comparability
+numeric_features <- c("unified_memory", "unified_tdp", "tensor_cores", "g3dmark", "g2dmark")
+gpu_data[numeric_features] <- lapply(gpu_data[numeric_features], as.numeric)
+gpu_data[numeric_features] <- scale(gpu_data[numeric_features])
 
-# Subset and remove missing values so all models are trained on the exact same rows
-model_vars <- c("is_workstation", "unified_memory", "unified_tdp", "tensor_cores", "g3dmark", "g2dmark")
+# Subset and remove missing values so models are evaluated fairly
+model_vars <- c("is_workstation", numeric_features)
 model_data <- na.omit(gpu_data[, model_vars])
 
-# Fit the Logistic Regression Model
-# Model A: AI & Hardware Focused
-model_ai <- glm(is_workstation ~ unified_memory + unified_tdp + tensor_cores,
-                   data = model_data, family = binomial(link = "logit"))
+# Train/Test Split (80/20) to prevent overfitting
+set.seed(42)
+train_index <- createDataPartition(model_data$is_workstation, p = 0.8, list = FALSE)
+train_data <- model_data[train_index, ]
+test_data  <- model_data[-train_index, ]
 
-# Output the Model Summary
-# This will provide the coefficients (beta), standard errors, z-values, and p-values
-summary(model_ai)
+# Train the full model and apply automated feature selection (Stepwise AIC)
+model_full <- glm(is_workstation ~ ., data = train_data, family = "binomial")
+model_best <- step(model_full, direction = "both", trace = 0)
+
+# Output Inference Results (Econometric Analysis)
+summary(model_best)
 ```
-```{r}
-# Calculate Odds Ratios for Interpretability
-# Exponentiating the coefficients to understand the multiplicative effect on the odds
-odds_ratios <- exp(coef(model_ai))
-conf_intervals <- exp(confint(model_ai))
 
-# Display Odds Ratios alongside 95% Confidence Intervals
+```{r}
+# Calculate and Display Odds Ratios
+# Note: Because data is scaled, these represent the effect of a 1 Standard Deviation change
+odds_ratios <- exp(coef(model_best))
+suppressMessages(conf_intervals <- exp(confint(model_best)))
 cbind(Odds_Ratio = odds_ratios, conf_intervals)
 
-# Optional: Predict Probabilities on the dataset to map the boundary
-gpu_data$prob_workstation <- predict(model_ai, type = "response")
+# Predictive Validation on Unseen Data
+predicted_probs <- predict(model_best, newdata = test_data, type = "response")
+predicted_classes <- as.factor(ifelse(predicted_probs > 0.5, 1, 0))
+
+# Print the Confusion Matrix
+confusionMatrix(data = predicted_classes, reference = test_data$is_workstation)
 ```
 
 We look specifically at the Estimate and Pr(>|z|) (p-value) for tensor_cores and unified_memory.
 
 * *Validating the AI Barrier*: If tensor_cores yields a large, positive, and statistically significant coefficient ($p < 0.05$), it empirically proves that high-end AI capabilities are systematically reserved for the workstation market.
-* *Odds Ratios*: The exponentiated coefficient (Odds_Ratio) for unified_memory will tell you exactly how much the odds of a GPU being classed as a "Workstation" increase for every additional gigabyte of VRAM.
-
-#### Comparing with other models
+* *Odds Ratios*: The exponentiated coefficient (Odds_Ratio) for unified_memory will tell you exactly how much the odds of a GPU being classed as a "Workstation" increase for every standard deviation increase in VRAM.
 
 ```{r}
-# Model B: Traditional Rasterization Focused
-model_raster <- glm(is_workstation ~ g3dmark + g2dmark,
-                    data = model_data, family = binomial(link = "logit"))
-# Model C: The Full Model (includes everything)
-model_full <- glm(is_workstation ~ unified_memory + unified_tdp + tensor_cores + g3dmark + g2dmark,
-                  data = model_data, family = binomial(link = "logit"))
+# CHART 1: Feature Importance (The "AI Tax" Proof)
+# Extract the coefficients and confidence intervals cleanly, and exponentiate
+# them to get the Odds Ratios. We filter out the intercept as it's not a feature.
+model_tidy <- tidy(model_best, conf.int = TRUE, exponentiate = TRUE)
+model_tidy <- model_tidy[model_tidy$term != "(Intercept)", ]
 
-# Automated Model Selection (Stepwise Algorithm)
-# This systematically adds/removes variables to find the mathematically optimal model
-# 'trace = 0' suppresses the wall of text it generates; set to 1 if you want to see the steps
-model_auto <- step(model_full, direction = "both", trace = 0)
-# View the final predictors chosen by the algorithm
-summary(model_auto)
+# Create the Coefficient Forest Plot
+plot_importance <- ggplot(model_tidy, aes(x = estimate, y = reorder(term, estimate))) +
+  geom_point(size = 3, color = "#2c3e50") +
+  geom_errorbar(aes(xmin = conf.low, xmax = conf.high), orientation = "y", width = 0.2, color = "#2c3e50", size = 1) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "#e74c3c", size = 1) +
+  labs(title = "Drivers of Enterprise Market Segmentation",
+       subtitle = "Odds Ratios with 95% Confidence Intervals (Scaled Data)",
+       x = "Odds Ratio (Multiplicative effect per 1 Standard Deviation increase)",
+       y = "Hardware Predictor") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"))
+
+print(plot_importance)
 ```
+
+The Red Dashed Line represents an Odds Ratio of 1.0 (neutral effect).
+
+* Any dot to the right of the line increases the chance of a card being a workstation. Any dot to the left decreases it.
+* Because we scaled the data, we can look at the physical distance of the dots. If tensor_cores is much further to the right than g3dmark, this chart is your definitive, visual proof that AI capabilities drive enterprise segmentation far more than traditional gaming power.
 
 ```{r}
-# AIC (Akaike Information Criterion): Lower is better. It penalizes complex models.
-aic_comparison <- AIC(model_ai, model_raster, model_auto)
-# Calculate Delta AIC to see how far off the lesser models are from the best one
-aic_comparison$Delta_AIC <- aic_comparison$AIC - min(aic_comparison$AIC)
+# CHART 2: Model Confidence & Decision Boundary
+# Create a dataframe pairing the actual test classes with the model's predicted probabilities
+results_df <- data.frame(
+  Actual_Class = ifelse(test_data$is_workstation == 1, "Workstation", "Consumer"),
+  Predicted_Probability = predicted_probs
+)
 
-cat("\n--- Model Comparison (Lowest AIC is Best) ---\n")
-print(aic_comparison[order(aic_comparison$AIC), ])
-# Likelihood Ratio Test
-# Tests if the automated model provides a statistically significant improvement over your original AI model
-cat("\n--- Likelihood Ratio Test: Original AI vs. Auto Selected ---\n")
-anova(model_ai, model_auto, test = "Chisq")
+# Create the Density Plot
+plot_density <- ggplot(results_df, aes(x = Predicted_Probability, fill = Actual_Class)) +
+  geom_density(alpha = 0.7, color = "white") +
+  geom_vline(xintercept = 0.5, linetype = "dashed", color = "black", size = 1) +
+  scale_fill_manual(values = c("Consumer" = "#3498db", "Workstation" = "#e67e22")) +
+  labs(title = "Classification Boundary: Consumer vs. Workstation",
+       subtitle = "Density of predicted probabilities on the unseen test set",
+       x = "Model's Predicted Probability of being a Workstation",
+       y = "Density",
+       fill = "Actual GPU Class") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "bottom")
+
+print(plot_density)
 ```
 
+The Dashed Line is our 0.5 decision boundary.
+
+* we want to see two distinct "mountains." The blue Consumer mountain should be shoved entirely against the left side (0.0 probability), and the orange Workstation mountain should be shoved entirely against the right (1.0 probability).
+* If the mountains don't overlap, it proves our model perfectly maps the physical boundaries of the GPU market.
 
 ## Lasso Regression: Regularization & Feature Selection
 
