@@ -16,6 +16,10 @@ library(caret)
 library(readr)
 library(ggplot2)
 library(broom)
+library(pROC)
+library(MASS)
+
+select <- dplyr::select
 ```
 
 # Data Processing
@@ -647,6 +651,26 @@ The Dashed Line is our 0.5 decision boundary.
 
 * As the plot reveals, we observe two distinct primary distributions pushed toward the extremes, confirming a strong overall market segmentation. The blue Consumer density is anchored heavily toward the left (0.0 probability), while the orange Workstation density peaks toward the right (1.0 probability).
 * However, we also observe a critical region of overlap across the decision boundary. This overlap represents the hardware configurations (such as "Titan" class cards or extreme high-end consumer units) that blur the line between enthusiast gaming and entry-level enterprise utility. It mathematically demonstrates that while VRAM capacity heavily dictates market segmentation, the architectural boundaries are not absolute, and manufacturers deliberately allow a degree of hardware crossover.
+
+```{r}
+roc_curve <- roc(test_data$is_workstation, predicted_probs)
+plot(roc_curve, main = "ROC Curve for GPU Classification", col = "blue", lwd = 2)
+auc(roc_curve)
+```
+
+```{r}
+lda_model <- lda(is_workstation ~ unified_memory + tensor_cores + g3dmark, data = train_data)
+lda_preds <- predict(lda_model, test_data)
+confusionMatrix(lda_preds$class, test_data$is_workstation)
+```
+
+```{r}
+roc_curve <- roc(test_data$is_workstation, lda_preds$posterior[, 2])
+plot(roc_curve, main = "ROC Curve for LDA Classification", col = "green", lwd = 2)
+auc(roc_curve)
+```
+
+To classify the hardware, both Logistic Regression and Linear Discriminant Analysis (LDA) were evaluated. While LDA is typically more stable when classes are well-separated, it assumes equal covariance matrices across classes. The GPU market is highly heteroscedastic: consumer silicon is tightly clustered in price and specifications, whereas enterprise workstation silicon exhibits massive variance (e.g., reaching up to $35,000 and 192GB VRAM). Because this violates LDA's core assumptions, the model exhibited severe systemic bias (McNemar's p < 0.001), achieving 100% sensitivity but collapsing to 43.4% specificity. Logistic Regression, which does not assume equal covariance, proved far superior, achieving a highly balanced accuracy with an impressive AUC of 0.9022.
 
 ## Lasso Regression: Regularization & Feature Selection
 
