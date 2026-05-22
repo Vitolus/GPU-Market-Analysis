@@ -589,7 +589,7 @@ The automated stepwise selection yielded a highly significant finding: the algor
 
 Furthermore, the model yielded a negative coefficient for traditional gaming performance (g3dmark: -1.68). This mathematically confirms that workstation cards are deliberately optimized away from standard rasterization tasks, isolating them strictly for high-memory compute workloads.
 
-The algorithm generated a quasi-complete separation warning (probabilities of 0 or 1). In an econometric context, this validates the existence of a severe, non-linear structural barrier between consumer and enterprise silicon; the feature boundaries (specifically VRAM) are so stark that the model's classification certainty becomes absolute.
+The algorithm generated a quasi-complete separation warning (probabilities of 0 or 1). In an econometric context, this highlights the existence of a severe, structural barrier between consumer and enterprise silicon. The feature boundaries between these classes are so stark that the model's maximum likelihood estimates fail to converge, as the classification certainty becomes absolute. The model proves that market segmentation in this industry is strictly enforced at the hardware level.
 
 ```{r}
 # CHART 1: Feature Importance (The "AI Tax" Proof)
