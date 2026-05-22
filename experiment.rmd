@@ -6,12 +6,13 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 # Install required packages if missing:
-# install.packages(c("tidyverse", "lubridate", "janitor"))
+# install.packages(c("tidyverse", "lubridate", "janitor", "caret"))
 
 library(tidyverse)
 library(lubridate)
 library(stringr)
 library(janitor)
+library(caret)
 ```
 
 # Data Processing
@@ -335,6 +336,8 @@ hardware_dictionary <- video_cards_clean %>%
 
 #### Regression Imputation for Missing Benchmarks
 
+
+
 ```{r}
 # Train a simple model on GPUs that have both g3dmark and fp32_flops
 g3d_model <- lm(g3dmark ~ fp32_flops, data = filter(hardware_dictionary, !is.na(g3dmark) & !is.na(fp32_flops)))
@@ -379,7 +382,6 @@ hardware_dictionary <- hardware_dictionary %>%
   ungroup() %>%
   # Cast classification target
   mutate(
-    is_workstation = as.factor(ifelse(category == "Workstation", 1, 0)),
     category = as.factor(category)
   ) %>%
   # Drop unified clock speeds (they are highly missing and redundant now that g3dmark is populated)
@@ -477,7 +479,9 @@ time_series_data <- shs_clean %>%
 write_csv(time_series_data, "data/time_series_temporal.csv", na = "NA")
 ```
 
+#### Dataset Preparation for Modeling
 
+Final refinements in preparation for the ISLR modeling phase: we calculate a dynamic inflation adjustment for GPU prices based on the PPI, which will allow us to analyze price trends in real terms over time.
 
 ```{r}
 # Extract the absolute baseline PPI for our target month (December 2025)
@@ -497,7 +501,7 @@ final_modeling_dataset <- time_series_data %>%
   select(
     month_year, chipset, percentage, semi_ppi,
     category, g3dmark, g2dmark, tensor_cores,
-    unified_tdp, unified_memory, is_workstation,
+    unified_tdp, unified_memory,
     unified_price, inflation_adjusted_price
   ) %>%
   arrange(month_year, desc(percentage))
@@ -506,3 +510,117 @@ write_csv(hardware_dictionary, "data/hardware_dictionary_static.csv", na = "NA")
 write_csv(hardware_dictionary_shs_only, "data/hardware_dictionary_shs_only.csv", na = "NA")
 write_csv(final_modeling_dataset, "data/final_modeling_dataset.csv", na = "NA")
 ```
+
+# Modeling Phase
+
+To prevent severe overfitting, cross-validation is strictly required for model selection. It must be systematically deployed to:
+1. Identify the precise tuning parameter $\lambda$ that minimizes test error in the Lasso models.
+2. Select the optimal effective degrees of freedom (number of knots) for the Natural Cubic Splines within the GAM framework.
+
+## Logistic Regression: Classification of Market Stratification
+
+Model the conditional probability that a GPU is classified as an enterprise-grade unit based on its physical and architectural predictors.
+
+$$\log\left(\frac{Pr(Y=\text{Workstation}|X)}{1-Pr(Y=\text{Workstation}|X)}\right)=\beta_0+\beta_1(\text{unified_memory})+\beta_2(\text{unified_tdp})+\beta_3(\text{tensor_cores})$$
+
+Yielding large, positive, and statistically significant coefficients for specific AI predictors (e.g., tensor_cores) will empirically validate that high-end AI capabilities are systematically segmented and reserved for the workstation market.
+
+```{r}
+gpu_data <- read_csv("data/hardware_dictionary_static.csv")
+# Data Preparation: Create the binary target variable
+# We map 'Workstation' to 1 (Enterprise/Professional) and 'Desktop' to 0 (Consumer)
+gpu_data$is_workstation <- as.factor(ifelse(gpu_data$category == "Workstation", 1, 0))
+
+# Ensure predictors are numeric
+gpu_data$unified_memory <- as.numeric(gpu_data$unified_memory)
+gpu_data$unified_tdp <- as.numeric(gpu_data$unified_tdp)
+gpu_data$tensor_cores <- as.numeric(gpu_data$tensor_cores)
+gpu_data$g3dmark <- as.numeric(gpu_data$g3dmark)
+gpu_data$g2dmark <- as.numeric(gpu_data$g2dmark)
+
+# Subset and remove missing values so all models are trained on the exact same rows
+model_vars <- c("is_workstation", "unified_memory", "unified_tdp", "tensor_cores", "g3dmark", "g2dmark")
+model_data <- na.omit(gpu_data[, model_vars])
+
+# Fit the Logistic Regression Model
+# Model A: AI & Hardware Focused
+model_ai <- glm(is_workstation ~ unified_memory + unified_tdp + tensor_cores,
+                   data = model_data, family = binomial(link = "logit"))
+
+# Output the Model Summary
+# This will provide the coefficients (beta), standard errors, z-values, and p-values
+summary(model_ai)
+```
+```{r}
+# Calculate Odds Ratios for Interpretability
+# Exponentiating the coefficients to understand the multiplicative effect on the odds
+odds_ratios <- exp(coef(model_ai))
+conf_intervals <- exp(confint(model_ai))
+
+# Display Odds Ratios alongside 95% Confidence Intervals
+cbind(Odds_Ratio = odds_ratios, conf_intervals)
+
+# Optional: Predict Probabilities on the dataset to map the boundary
+gpu_data$prob_workstation <- predict(model_ai, type = "response")
+```
+
+We look specifically at the Estimate and Pr(>|z|) (p-value) for tensor_cores and unified_memory.
+
+* *Validating the AI Barrier*: If tensor_cores yields a large, positive, and statistically significant coefficient ($p < 0.05$), it empirically proves that high-end AI capabilities are systematically reserved for the workstation market.
+* *Odds Ratios*: The exponentiated coefficient (Odds_Ratio) for unified_memory will tell you exactly how much the odds of a GPU being classed as a "Workstation" increase for every additional gigabyte of VRAM.
+
+#### Comparing with other models
+
+```{r}
+# Model B: Traditional Rasterization Focused
+model_raster <- glm(is_workstation ~ g3dmark + g2dmark,
+                    data = model_data, family = binomial(link = "logit"))
+# Model C: The Full Model (includes everything)
+model_full <- glm(is_workstation ~ unified_memory + unified_tdp + tensor_cores + g3dmark + g2dmark,
+                  data = model_data, family = binomial(link = "logit"))
+
+# Automated Model Selection (Stepwise Algorithm)
+# This systematically adds/removes variables to find the mathematically optimal model
+# 'trace = 0' suppresses the wall of text it generates; set to 1 if you want to see the steps
+model_auto <- step(model_full, direction = "both", trace = 0)
+# View the final predictors chosen by the algorithm
+summary(model_auto)
+```
+
+```{r}
+# AIC (Akaike Information Criterion): Lower is better. It penalizes complex models.
+aic_comparison <- AIC(model_ai, model_raster, model_auto)
+# Calculate Delta AIC to see how far off the lesser models are from the best one
+aic_comparison$Delta_AIC <- aic_comparison$AIC - min(aic_comparison$AIC)
+
+cat("\n--- Model Comparison (Lowest AIC is Best) ---\n")
+print(aic_comparison[order(aic_comparison$AIC), ])
+# Likelihood Ratio Test
+# Tests if the automated model provides a statistically significant improvement over your original AI model
+cat("\n--- Likelihood Ratio Test: Original AI vs. Auto Selected ---\n")
+anova(model_ai, model_auto, test = "Chisq")
+```
+
+
+## Lasso Regression: Regularization & Feature Selection
+
+Resolve the severe multicollinearity existing between traditional gaming benchmarks and AI computational metrics within the high-dimensional feature space ($p$).
+
+$$\min_{\beta}\left(\text{RSS}+\lambda\sum_{j=1}^p|\beta_j|\right)$$
+
+The geometric properties of the $L_1$ norm penalty allow the Lasso to shrink the coefficient estimates of irrelevant or highly correlated predictors to exactly zero. If traditional gaming APIs (g3dmark) are penalized to zero while AI-specific metrics retain large positive weights, this provides rigorous econometric proof that the "AI Tax" is driving retail prices.
+
+## Generalized Additive Models (GAMs): Non-Linear Market Economics
+
+Model exponential scaling rules and physical boundaries by replacing rigid linear components with highly flexible, non-linear smoothing functions, $f_j(X_j)$.
+
+$$\text{Price}=\beta_0+f_1(\text{g3dmark})+f_2(\text{tensor\_cores})+f_3(\text{FRED\_PPI})+\epsilon$$
+
+#### Step Functions
+
+Applied to VRAM capacity (unified_memory) to group continuous memory values into distinct bins, capturing the extreme price jumps that occur at specific architectural thresholds required to run specific AI models locally.
+
+#### Natural Cubic Slines
+
+Applied to continuous computational metrics (tensor_cores, FLOPs) to automatically map exponential price-to-performance curvature, avoiding erratic oscillation at the extremes of the data distribution.
+
