@@ -14,6 +14,7 @@ library(stringr)
 library(janitor)
 library(caret)
 library(readr)
+library(glmnet)
 library(ggplot2)
 library(broom)
 library(pROC)
@@ -700,6 +701,66 @@ Resolve the severe multicollinearity existing between traditional gaming benchma
 $$\min_{\beta}\left(\text{RSS}+\lambda\sum_{j=1}^p|\beta_j|\right)$$
 
 The geometric properties of the $L_1$ norm penalty allow the Lasso to shrink the coefficient estimates of irrelevant or highly correlated predictors to exactly zero. If traditional gaming APIs (g3dmark) are penalized to zero while AI-specific metrics retain large positive weights, this provides rigorous econometric proof that the "AI Tax" is driving retail prices.
+
+```{r}
+gpu_data <- read_csv("data/final_modeling_dataset.csv")
+# Select the continuous target and relevant predictors
+model_vars_lasso <- c("inflation_adjusted_price", "g3dmark", "g2dmark", "tensor_cores", "unified_memory", "unified_tdp")
+lasso_data <- na.omit(gpu_data[, model_vars_lasso])
+# glmnet requires an explicitly defined x matrix and y vector.
+# We manually scale the predictor matrix (x) so the resulting coefficients
+# represent the dollar impact per 1 Standard Deviation increase.
+x_matrix <- scale(as.matrix(lasso_data[, -1]))
+y_vector <- lasso_data$inflation_adjusted_price
+# Train the Lasso model with cross-validation to find the optimal lambda
+train_index <- sample(seq_len(nrow(lasso_data)), 0.8 * nrow(lasso_data))
+x_train <- x_matrix[train_index, ]
+y_train <- y_vector[train_index]
+x_test <- x_matrix[-train_index, ]
+y_test <- y_vector[-train_index]
+# Systematically test different values of lambda to find the optimal penalty
+# alpha = 1 enforces the absolute value L1 penalty (Lasso)
+set.seed(42)
+cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
+best_lambda <- cv_lasso$lambda.min
+# Train the final Lasso model using the optimal lambda
+final_lasso <- glmnet(x_train, y_train, alpha = 1, lambda = best_lambda)
+coef(final_lasso)
+
+```
+
+#### Visualize the AI Tax Premium
+
+To effectively interpret the geometric shrinkage of the Lasso algorithm, we isolate the non-zero coefficients and visualize their relative monetary weight on the target price.
+
+```{r}
+# Extract coefficients into a clean dataframe
+lasso_coefs <- as.data.frame(as.matrix(coef(final_lasso)))
+lasso_coefs$Feature <- rownames(lasso_coefs)
+colnames(lasso_coefs)[1] <- "Coefficient"
+# Filter out the intercept and zero coefficients
+lasso_coefs <- lasso_coefs[lasso_coefs$Feature != "(Intercept)" & lasso_coefs$Coefficient != 0, ]
+# Generate the Feature Importance Plot
+ggplot(lasso_coefs, aes(x = Coefficient, y = reorder(Feature, Coefficient), fill = Coefficient > 0)) +
+  geom_col(alpha = 0.85) +
+  scale_fill_manual(values = c("TRUE" = "#2ecc71", "FALSE" = "#e74c3c")) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 1) +
+  labs(title = "Lasso Feature Selection: Drivers of GPU Pricing",
+       subtitle = "Monetary impact (USD) on retail price per 1 Standard Deviation increase",
+       x = "Price Premium (USD)",
+       y = "Hardware Architecture") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "none")
+```
+
+Just like in the classification model, VRAM capacity is the absolute dominant force that drives the price increase in the GPU market. The AI tax is fundamentally a capacity tax, with manufacturers leveraging VRAM as the primary vehicle for monetary extraction.
+
+The model kept g3dmark with a strong positive weight. This fact makes perfect economic sense: while VRAM decides if a card is an enterprise unit, raw gaming performance still heavily dictates the price of a card across the general consumer market and the extreme high-end MSRP inflation is driven entirely by AI-centric architecture.
+
+Interestingly, tensor_cores has a positive price premium. While the logistic model showed it doesn't define the boundary between consumer and enterprise, the Lasso proves manufacturers still charge a tangible dollar amount for raw AI compute speed.
+
+The negative bar for TDP is a great finding: it shows that higher power consumption and heat generation mathematically penalize a card's retail value. This fact is likely because enterprise and consumer buyers alike heavily value power efficiency.
 
 ## Generalized Additive Models (GAMs): Non-Linear Market Economics
 
