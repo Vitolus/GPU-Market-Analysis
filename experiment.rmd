@@ -671,7 +671,7 @@ plot(roc_curve, main = "ROC Curve for LDA Classification", col = "green", lwd = 
 auc(roc_curve)
 ```
 
-o classify the hardware, both Logistic Regression and Linear Discriminant Analysis (LDA) were evaluated. Initially, the inclusion of specific architectural metrics (e.g., Tensor Cores) introduced massive, uncontrolled variance into the Workstation class, violently violating LDA’s core assumption of homoscedasticity (equal covariance matrices across classes). This caused the initial LDA model to exhibit severe systemic bias, achieving 100% sensitivity but collapsing to 43.4% specificity (McNemar's p < 0.001).
+To classify the hardware, both Logistic Regression and Linear Discriminant Analysis (LDA) were evaluated. Initially, the inclusion of specific architectural metrics (e.g., Tensor Cores) introduced massive, uncontrolled variance into the Workstation class, violently violating LDA’s core assumption of homoscedasticity (equal covariance matrices across classes). This caused the initial LDA model to exhibit severe systemic bias, achieving 100% sensitivity but collapsing to 43.4% specificity (McNemar's p < 0.001).
 
 However, by dropping the tensor_cores predictor, the revised LDA model restored mathematical balance: specificity recovered to 78.26%, and McNemar’s Test returned a non-significant result (p = 0.4237), proving the model was no longer systemically biased toward the Consumer class.
 
@@ -702,17 +702,23 @@ $$\min_{\beta}\left(\text{RSS}+\lambda\sum_{j=1}^p|\beta_j|\right)$$
 
 The geometric properties of the $L_1$ norm penalty allow the Lasso to shrink the coefficient estimates of irrelevant or highly correlated predictors to exactly zero. If traditional gaming APIs (g3dmark) are penalized to zero while AI-specific metrics retain large positive weights, this provides rigorous econometric proof that the "AI Tax" is driving retail prices.
 
+A critical structural component of this temporal Lasso regression is its strict isolation to the consumer market. Because the temporal telemetry is derived from the Steam Hardware Survey, enterprise-grade workstation cards are entirely excluded from this specific model. Therefore, this algorithm mathematically evaluates price inflation strictly within the consumer desktop tier.
+
+### Price Inflation Analysis
+
 ```{r}
-gpu_data <- read_csv("data/final_modeling_dataset.csv")
+# This captures point-of-sale volatility and macroeconomic price shifts over time
+gpu_time_data <- read_csv("data/final_modeling_dataset.csv")
 # Select the continuous target and relevant predictors
 model_vars_lasso <- c("inflation_adjusted_price", "g3dmark", "g2dmark", "tensor_cores", "unified_memory", "unified_tdp")
-lasso_data <- na.omit(gpu_data[, model_vars_lasso])
+lasso_data <- na.omit(gpu_time_data[, model_vars_lasso])
 # glmnet requires an explicitly defined x matrix and y vector.
 # We manually scale the predictor matrix (x) so the resulting coefficients
 # represent the dollar impact per 1 Standard Deviation increase.
 x_matrix <- scale(as.matrix(lasso_data[, -1]))
 y_vector <- lasso_data$inflation_adjusted_price
 # Train the Lasso model with cross-validation to find the optimal lambda
+set.seed(42)
 train_index <- sample(seq_len(nrow(lasso_data)), 0.8 * nrow(lasso_data))
 x_train <- x_matrix[train_index, ]
 y_train <- y_vector[train_index]
@@ -720,7 +726,6 @@ x_test <- x_matrix[-train_index, ]
 y_test <- y_vector[-train_index]
 # Systematically test different values of lambda to find the optimal penalty
 # alpha = 1 enforces the absolute value L1 penalty (Lasso)
-set.seed(42)
 cv_lasso <- cv.glmnet(x_train, y_train, alpha = 1)
 best_lambda <- cv_lasso$lambda.min
 # Train the final Lasso model using the optimal lambda
@@ -754,13 +759,77 @@ ggplot(lasso_coefs, aes(x = Coefficient, y = reorder(Feature, Coefficient), fill
         legend.position = "none")
 ```
 
-Just like in the classification model, VRAM capacity is the absolute dominant force that drives the price increase in the GPU market. The AI tax is fundamentally a capacity tax, with manufacturers leveraging VRAM as the primary vehicle for monetary extraction.
+Just like in the classification model, VRAM capacity is the absolute dominant force that drives the price increase in the GPU consumer market, heavily outweighing traditional rasterization metrics. The AI tax is fundamentally a capacity tax, with manufacturers leveraging VRAM as the primary vehicle for monetary extraction.
 
-The model kept g3dmark with a strong positive weight. This fact makes perfect economic sense: while VRAM decides if a card is an enterprise unit, raw gaming performance still heavily dictates the price of a card across the general consumer market and the extreme high-end MSRP inflation is driven entirely by AI-centric architecture.
+The model kept g3dmark with a strong positive weight. But its monetary impact is strictly secondary to VRAM. This indicates that while traditional gaming performance dictates baseline pricing for entry-level and mid-range cards, extreme high-end inflation is driven by AI-centric architecture.
 
-Interestingly, tensor_cores has a positive price premium. While the logistic model showed it doesn't define the boundary between consumer and enterprise, the Lasso proves manufacturers still charge a tangible dollar amount for raw AI compute speed.
+Interestingly, tensor_cores has a positive price premium. While the logistic model showed it doesn't define the boundary between consumer and enterprise, the Lasso proves raw AI compute speed commands a dedicated retail premium even for consumer desktop users.
 
-The negative bar for TDP is a great finding: it shows that higher power consumption and heat generation mathematically penalize a card's retail value. This fact is likely because enterprise and consumer buyers alike heavily value power efficiency.
+The negative bar for TDP is a great finding: it shows that higher power consumption and heat generation mathematically penalize a card's retail value. This fact is likely because consumer buyers heavily value power efficiency.
+
+### Percentage Adoption Analysis
+
+While the initial Lasso model identified the hardware architectures that dictate retail price, this secondary model shifts the target to consumer adoption (`percentage`). This allows us to quantify the true drivers of mass market penetration.
+
+Crucially, `inflation_adjusted_price` is introduced here as a predictor to calculate the price elasticity of consumer hardware adoption alongside physical architecture.
+
+```{r}
+model_vars_share <- c("percentage", "inflation_adjusted_price", "g3dmark", "g2dmark", "tensor_cores", "unified_memory", "unified_tdp")
+lasso_data_share <- na.omit(gpu_time_data[, model_vars_share])
+x_matrix_share <- scale(as.matrix(lasso_data_share[, -1]))
+y_vector_share <- lasso_data_share$percentage
+set.seed(42)
+train_index_share <- sample(seq_len(nrow(lasso_data_share)), 0.8 * nrow(lasso_data_share))
+x_train_share <- x_matrix_share[train_index_share, ]
+y_train_share <- y_vector_share[train_index_share]
+x_test_share <- x_matrix_share[-train_index_share, ]
+y_test_share <- y_vector_share[-train_index_share]
+cv_lasso_share <- cv.glmnet(x_train_share, y_train_share, alpha = 1)
+best_lambda_share <- cv_lasso_share$lambda.min
+final_lasso_share <- glmnet(x_train_share, y_train_share, alpha = 1, lambda = best_lambda_share)
+coef(final_lasso_share)
+```
+
+#### Visualize the Drivers of Consumer Adoption
+
+To visualize the drivers of consumer adoption, we isolate the non-zero coefficients and visualize their relative weight on the percentage of market share.
+
+```{r}
+
+lasso_coefs_share <- as.data.frame(as.matrix(coef(final_lasso_share)))
+lasso_coefs_share$Feature <- rownames(lasso_coefs_share)
+colnames(lasso_coefs_share)[1] <- "Coefficient"
+lasso_coefs_share <- lasso_coefs_share[lasso_coefs_share$Feature != "(Intercept)" & lasso_coefs_share$Coefficient != 0, ]
+ggplot(lasso_coefs_share, aes(x = Coefficient, y = reorder(Feature, Coefficient), fill = Coefficient > 0)) +
+  geom_col(alpha = 0.85) +
+  scale_fill_manual(values = c("TRUE" = "#3498db", "FALSE" = "#e74c3c")) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", size = 1) +
+  labs(title = "Lasso Feature Selection: Drivers of Market Share",
+       subtitle = "Impact on consumer adoption percentage per 1 Standard Deviation increase",
+       x = "Impact on Market Share (%)",
+       y = "Hardware & Economic Predictors") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title = element_text(face = "bold"),
+        legend.position = "none")
+```
+
+The secondary Lasso regression mathematically exposes a profound disconnect between hardware pricing strategies and actual consumer behavior.
+
+The traditional gaming performance g3dmark is the absolute dominant driver of consumer adoption. A one standard deviation increase in rasterization performance yields the largest positive impact on market share. This proves that despite the industry's architectural pivot toward enterprise AI, the desktop consumer base remains fundamentally anchored in rendering utility.
+
+As expected, the card's price exhibits a massive negative coefficient. It acts as the primary deterrent to market penetration. The extreme price premiums levied on modern hardware heavily suppress broad adoption, demonstrating high price elasticity within the consumer segment.
+
+The model yielded a distinct negative coefficient for unified_tdp, demonstrating that consumers actively penalize hardware inefficiency and high thermal output. Most crucially, the Lasso algorithm shrank both tensor_cores and unified_memory close to exactly zero. This mathematically proves that AI-specific architecture has virtually no influence on mass consumer purchasing decisions.
+
+### Conclusion: The Structural Market Mismatch
+
+By synthesizing the results of both Lasso regression models, a clear and quantifiable macroeconomic narrative emerges regarding the "AI Tax."
+
+* *The Manufacturer Pricing Reality*: The initial pricing model proved that manufacturers value modern desktop GPUs primarily based on their AI capacity. VRAM (unified_memory) dictates the highest retail price premiums, confirming the existence of a structural AI Tax levied directly on the consumer market.
+
+* *The Consumer Adoption Reality*: The market share model proved that consumers reject this valuation. Mass market adoption is driven almost entirely by traditional rasterization performance and is severely suppressed by high MSRPs and high power draw.
+
+Thus, there is a fundamental structural mismatch in the current semiconductor market. Manufacturers are artificially inflating the price of consumer hardware by an increase in memory price per gigabyte. However, because the consumer base still strictly values traditional gaming performance and thermal efficiency, this AI Tax creates severe market friction. It prices out average users and aggressively suppresses the mass adoption of modern architectures, as consumers refuse to pay a premium for AI capabilities they do not utilize.
 
 ## Generalized Additive Models (GAMs): Non-Linear Market Economics
 
