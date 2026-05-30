@@ -835,7 +835,9 @@ Thus, there is a fundamental structural mismatch in the current semiconductor ma
 
 Model exponential scaling rules and physical boundaries by replacing rigid linear components with highly flexible, non-linear smoothing functions, $f_j(X_j)$.
 
-$$\text{Price}=\beta_0+f_1(\text{g3dmark})+f_2(\text{tensor\_cores})+f_3(\text{FRED\_PPI})+\epsilon$$
+$$\text{Target} = \beta_0 + f_1(\text{Time}) + f_2(\text{g3dmark}) + \beta_1(\text{VRAM\_Bin}) + \epsilon$$
+
+Hardware markets are governed by exponential scaling rules, distinct capability thresholds, and temporal shocks. Having established the linear feature importance through Lasso regularization, Generalized Additive Models (GAMs) are deployed to map the continuous, non-linear trajectories of retail pricing and consumer adoption.
 
 #### Step Functions
 
