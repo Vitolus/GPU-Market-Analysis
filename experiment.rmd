@@ -6,7 +6,7 @@ output: html_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
 # Install required packages if missing:
-# install.packages(c("tidyverse", "lubridate", "janitor", "caret"))
+# install.packages(c("tidyverse", "lubridate", "janitor", "caret", "gratia"))
 
 library(tidyverse)
 library(lubridate)
@@ -19,6 +19,9 @@ library(ggplot2)
 library(broom)
 library(pROC)
 library(MASS)
+library(mgcv)
+library(gratia)
+library(patchwork)
 
 select <- dplyr::select
 ```
@@ -841,11 +844,97 @@ $$\text{Target} = \beta_0 + f_{\text{spline}}(\text{Time}) + f_{\text{spline}}(\
 * **Step Functions**: Applied to VRAM capacity. Because executing local AI models requires hard minimums of memory, step functions transform continuous memory values into distinct capability classes (bins) to capture extreme price jumps at specific architectural thresholds.
 * **Natural Cubic Splines**: Applied to performance metrics and temporal variables. Natural splines automatically map the continuous, exponential curvature of the market without oscillating erratically at the extremes.
 
-#### Step Functions
+```{r}
+gam_data <- read_csv("data/final_modeling_dataset.csv")
+gam_data <- gam_data %>%
+  mutate(
+    date_parsed = ymd(month_year),
+    # scale the date to a numeric format for the spline function
+    numeric_time = as.numeric(date_parsed) / 1000
+  )
+```
 
-Applied to VRAM capacity (unified_memory) to group continuous memory values into distinct bins, capturing the extreme price jumps that occur at specific architectural thresholds required to run specific AI models locally.
+#### Step Functions: VRAM Architectural Tiers
 
-#### Natural Cubic Splines
+```{r}
+gam_data$vram_tier <- cut(
+  gam_data$unified_memory,
+  breaks = c(-Inf, 6, 10, 16, Inf),
+  labels = c("Entry (<8GB)", "Mid (8-10GB)", "High (12-16GB)", "Enthusiast (>16GB)")
+)
+# Subset to avoid matrix integrity issues
+gam_vars <- c("inflation_adjusted_price", "percentage", "numeric_time", "g3dmark", "vram_tier", "unified_tdp")
+gam_data <- na.omit(gam_data[, gam_vars])
+```
 
-Applied to continuous computational metrics (tensor_cores, FLOPs) to automatically map exponential price-to-performance curvature, avoiding erratic oscillation at the extremes of the data distribution.
+#### Natural Cubic Splines: Price Model
 
+```{r}
+# bs = "cr" explicitly applies Natural Cubic Splines to g3dmark and time
+gam_price <- gam(
+  inflation_adjusted_price ~ vram_tier + s(g3dmark, bs = "cr") + s(numeric_time, bs = "cr"),
+  data = gam_data,
+  method = "REML"
+)
+summary(gam_price)
+```
+
+#### Natural Cubic Splines: Market Share Model
+
+```{r}
+gam_share <- gam(
+  percentage ~ vram_tier + s(g3dmark, bs = "cr") + s(numeric_time, bs = "cr") + s(inflation_adjusted_price, bs = "cr"),
+  data = gam_data,
+  method = "REML"
+)
+summary(gam_share)
+```
+
+
+### Visualizing the Non-Linear Market Dynamics
+
+We use the `gratia` package to extract the mathematical splines from the GAM and plots the partial effects, isolating exactly how each variable bends the macroeconomic reality.
+
+```{r}
+# Plot Model 1: Price Dynamics
+plot_price_gams <- draw(gam_price, residuals = TRUE) +
+  plot_annotation(
+    title = "Non-Linear Pricing Dynamics (GAM)",
+    subtitle = "Partial effects of Rasterization and Time on Inflation-Adjusted Price",
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+print(plot_price_gams)
+```
+
+```{r}
+# Plot Model 2: Consumer Adoption Dynamics
+plot_share_gams <- draw(gam_share, residuals = TRUE) +
+  plot_annotation(
+    title = "Non-Linear Consumer Adoption Curves (GAM)",
+    subtitle = "Mapping the structural trajectory of installed base market share",
+    theme = theme(plot.title = element_text(face = "bold", size = 16))
+  )
+print(plot_share_gams)
+```
+
+```{r}
+# Visualize the VRAM Step Function (Price Premium by Tier)
+# Extracting parametric coefficients for the Step Function
+vram_effect <- ggplot(gam_data, aes(x = vram_tier, y = inflation_adjusted_price, fill = vram_tier)) +
+  geom_boxplot(alpha = 0.8, outlier.alpha = 0.2) +
+  scale_fill_viridis_d() +
+  labs(
+    title = "The VRAM Step Function: Architectural Price Barriers",
+    x = "VRAM Capacity Tier",
+    y = "Retail Price (USD)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(legend.position = "none", plot.title = element_text(face = "bold"))
+print(vram_effect)
+```
+
+The application of a step function to unified_memory empirically visualizes the hard architectural barriers of the GPU market. The boxplot demonstrates... This proves that manufacturers...
+
+The partial effect plot for s(g3dmark) in the pricing model...
+
+By applying Natural Cubic Splines to numeric_time, the GAM successfully maps the macroeconomic volatility of the decade without memorizing market noise. The partial effect of time on inflation_adjusted_price captures... Conversely, the temporal curve for percentage illustrates...
