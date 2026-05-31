@@ -908,7 +908,7 @@ print(plot_price_gams)
 
 The pricing GAM successfully maps the non-linear realities of silicon manufacturing and macroeconomic volatility:
 
-* **The Cost of Performance**: The spline for `g3dmark` captures the exponential cost scaling of high-performance silicon. The curve is relatively flat at low performance levels, reflecting the affordability of entry-level cards. However, as performance approaches the mid-range threshold (approx. 15,000), the curve bends sharply upward, demonstrating the exponential price inflation associated with high-end gaming and AI-capable hardware.
+* **The Cost of Performance**: The spline for `g3dmark` captures the exponential cost scaling of high-performance silicon. The curve is relatively increasing at low performance levels, reflecting the affordability of entry-level cards. This continuously ascending curve steepens further as it reaches the flagship tier, illustrating the price premiums levied on top-tier rasterization performance, even before considering the AI tax.
 
 * **Macroeconomic Volatility**: The spline for `numeric_time` captures exogenous supply-chain shocks without memorizing noisy market outliers. The curve maps a general historical baseline, punctuated by a violent price spike, perfectly reflecting the 2021 crypto-mining boom and global silicon shortage. Then it normalizes before showing the beginnings of a new upward trend, likely driven by the recent AI pivot.
 
