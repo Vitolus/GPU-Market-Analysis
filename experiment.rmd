@@ -693,9 +693,9 @@ plot(roc_curve, main = "ROC Curve for QDA Classification", col = "red", lwd = 2)
 auc(roc_curve)
 ```
 
-To explicitly model the heteroscedasticity of the GPU market—where consumer silicon is tightly clustered but enterprise silicon exhibits massive variance—Quadratic Discriminant Analysis (QDA) was deployed. Because QDA estimates a separate covariance matrix for each class, it generated the highest ranking accuracy of any model tested, achieving a peak AUC of 0.9292.
+To explicitly model the heteroscedasticity of the GPU market—where consumer silicon is tightly clustered but enterprise silicon exhibits massive variance, Quadratic Discriminant Analysis (QDA) was deployed. Because QDA estimates a separate covariance matrix for each class, it generated the highest ranking accuracy of any model tested, achieving a peak AUC of 0.9292.
 
-Despite this superior theoretical fit, QDA presented a classic thresholding paradox. At the default 0.5 probability threshold, the towering density of the tightly clustered Consumer class mathematically overwhelmed the flatter density distribution of the Workstation class, causing specificity to drop to 58.70%. This demonstrates that while QDA perfectly mapped the non-linear scaling of the market, deploying it effectively in this imbalanced domain requires manually lowering the decision threshold (e.g., to 0.3) to counteract the density skew and accurately capture enterprise hardware.
+Despite this superior theoretical fit, QDA presented a classic thresholding paradox. At the default 0.5 probability threshold, the towering density of the tightly clustered Consumer class mathematically overwhelmed the flatter density distribution of the Workstation class, causing specificity to drop to 58.70%. This demonstrates that while QDA perfectly mapped the non-linear scaling of the market, deploying it effectively in this imbalanced domain requires manually adjusting the decision threshold to counteract the density skew and accurately capture enterprise hardware.
 
 ## Lasso Regression: Regularization & Feature Selection
 
