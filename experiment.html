@@ -1149,7 +1149,7 @@ plot(roc_curve, main = &quot;ROC Curve for QDA Classification&quot;, col = &quot
 <pre><code>## Area under the curve: 0.9292</code></pre>
 <p>To explicitly model the heteroscedasticity of the GPU market—where
 consumer silicon is tightly clustered but enterprise silicon exhibits
-massive variance—Quadratic Discriminant Analysis (QDA) was deployed.
+massive variance, Quadratic Discriminant Analysis (QDA) was deployed.
 Because QDA estimates a separate covariance matrix for each class, it
 generated the highest ranking accuracy of any model tested, achieving a
 peak AUC of 0.9292.</p>
@@ -1159,9 +1159,9 @@ towering density of the tightly clustered Consumer class mathematically
 overwhelmed the flatter density distribution of the Workstation class,
 causing specificity to drop to 58.70%. This demonstrates that while QDA
 perfectly mapped the non-linear scaling of the market, deploying it
-effectively in this imbalanced domain requires manually lowering the
-decision threshold (e.g., to 0.3) to counteract the density skew and
-accurately capture enterprise hardware.</p>
+effectively in this imbalanced domain requires manually adjusting the
+decision threshold to counteract the density skew and accurately capture
+enterprise hardware.</p>
 </div>
 <div id="lasso-regression-regularization-feature-selection" class="section level2">
 <h2>Lasso Regression: Regularization &amp; Feature Selection</h2>
